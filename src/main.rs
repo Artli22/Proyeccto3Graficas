@@ -1,14 +1,24 @@
 mod estrellas;
-mod gpu;
+mod fragment;
+mod framebuffer;
 mod laser;
+mod luz;
+mod particle_renderer;
+mod pipeline;
 mod thrust;
+mod triangle;
 
+use cohete::color::Relleno;
 use cohete::controles::Controles;
 use cohete::obj::Model;
-use gpu::GpuRenderer;
+use fragment::ShaderParams;
+use framebuffer::Framebuffer;
 use laser::Laser;
+use particle_renderer::ParticulaPantalla;
+use pipeline::{ScreenVertex, Uniforms};
 use raylib::prelude::*;
 use thrust::ThrustEngine;
+use triangle::{profundidad_en, triangle};
 
 const SCREEN_WIDTH: i32 = 1200;
 const SCREEN_HEIGHT: i32 = 800;
@@ -28,16 +38,11 @@ struct View {
 }
 
 fn init() -> (RaylibHandle, RaylibThread) {
-    let mut flags = raylib::ffi::ConfigFlags::FLAG_WINDOW_HIGHDPI as u32;
-    if std::env::args().any(|a| a == "--verificar-gpu") {
-        flags |= raylib::ffi::ConfigFlags::FLAG_WINDOW_HIDDEN as u32;
-    }
-    unsafe { raylib::ffi::SetConfigFlags(flags); }
     let (mut rl, thread) = raylib::init()
         .size(SCREEN_WIDTH, SCREEN_HEIGHT)
-        .title("CargaModelo - GPU / raylib")
+        .title("Software Renderer")
         .build();
-    rl.set_target_fps(0); // F: alternar entre 60 FPS y sin limite para comparar.
+    rl.set_target_fps(60);
     (rl, thread)
 }
 
@@ -79,6 +84,148 @@ fn boquilla(model: &Model) -> Option<(Vector3, Vector3, f32)> {
     Some((pos, dir, radio * 0.6))
 }
 
+fn render(
+    framebuffer: &mut Framebuffer,
+    model: &Model,
+    view: &View,
+    seleccionado: Option<usize>,
+    thrust_engine: &ThrustEngine,
+    laser: Option<&Laser>,
+    luz_intensidad: f32,
+    estrellas: &estrellas::Estrellas,
+) {
+    let focal = SCREEN_HEIGHT as f32;
+    let resaltado = Relleno::Solido(COLOR_SELECCION);
+
+    type Visible<'a> = ([ScreenVertex; 3], &'a Relleno, ShaderParams);
+    let matrices = Uniforms::new(
+        model.center,
+        view.yaw,
+        view.pitch,
+        view.distance,
+        SCREEN_WIDTH,
+        SCREEN_HEIGHT,
+    );
+    let mut opacos: Vec<Visible> = Vec::new();
+    let mut translucidos: Vec<Visible> = Vec::new();
+
+    // Calcular posición de luz del propulsor (ANTES de renderizar el modelo)
+    let light_pos =
+        boquilla(model).map(|_| (rotar(thrust_engine.light_position, view), luz_intensidad));
+
+    for (indice, tri) in model.triangles.iter().enumerate() {
+        let transformed = std::array::from_fn::<_, 3, _>(|i| {
+            pipeline::vertex_shader(tri.vertices[i], tri.uvs[i], &matrices)
+        });
+        let p = transformed.map(|v| v.world);
+        let normal = (p[1] - p[0]).cross(p[2] - p[0]);
+        if normal.length() < 1e-6 {
+            continue;
+        }
+        let shader = ShaderParams {
+            normal: normal.normalized(),
+            eye: Vector3::new(0., 0., view.distance),
+            engine_light: light_pos,
+            unlit: seleccionado == Some(indice),
+        };
+        let material = if shader.unlit {
+            &resaltado
+        } else {
+            &tri.relleno
+        };
+        // Ensamblado -> clipping homogeneo -> division de perspectiva -> viewport.
+        for clipped in pipeline::clip_triangle(transformed) {
+            let screen = clipped.map(|v| pipeline::viewport(v, &matrices));
+            if material.es_opaco() {
+                opacos.push((screen, material, shader));
+            } else {
+                translucidos.push((screen, material, shader));
+            }
+        }
+    }
+
+    let profundidad = |t: &Visible| t.0[0].screen.z + t.0[1].screen.z + t.0[2].screen.z;
+    translucidos.sort_by(|a, b| profundidad(b).total_cmp(&profundidad(a)));
+
+    // Las partículas se proyectan una sola vez y se ordenan de atrás hacia adelante
+    let particulas = preparar_particulas(thrust_engine, view, focal);
+
+    // El láser sale de la misma boquilla que el propulsor de fuego
+    let haz = laser.and_then(|l| {
+        let (pos, dir, _) = boquilla(model)?;
+        l.preparar(
+            pos + dir * 0.15,
+            dir,
+            |v| rotar(v, view),
+            view.distance,
+            SCREEN_WIDTH,
+            SCREEN_HEIGHT,
+            focal,
+        )
+    });
+
+    // Cada hilo dibuja una franja: primero el modelo, luego el láser y la nube del propulsor
+    framebuffer.render_parallel(|franja| {
+        estrellas.dibujar(franja);
+        for (pantalla, relleno, shader) in opacos.iter().chain(translucidos.iter()) {
+            triangle(franja, *pantalla, relleno, *shader);
+        }
+        if let Some(haz) = &haz {
+            laser::dibujar_laser(franja, haz);
+        }
+        for p in &particulas {
+            particle_renderer::dibujar_particula(franja, p);
+        }
+    });
+}
+
+fn preparar_particulas(
+    thrust_engine: &ThrustEngine,
+    view: &View,
+    focal: f32,
+) -> Vec<ParticulaPantalla> {
+    let mut particulas: Vec<ParticulaPantalla> = thrust_engine
+        .get_particles()
+        .iter()
+        .filter_map(|p| {
+            particle_renderer::proyectar_particula(
+                rotar(p.position, view),
+                thrust_engine.get_particle_radius(p),
+                thrust_engine.get_particle_color(p),
+                view.distance,
+                SCREEN_WIDTH,
+                SCREEN_HEIGHT,
+                focal,
+            )
+        })
+        .collect();
+    particulas.sort_by(|a, b| b.depth.total_cmp(&a.depth));
+    particulas
+}
+
+fn triangulo_en(model: &Model, view: &View, x: f32, y: f32) -> Option<usize> {
+    let matrices = Uniforms::new(
+        model.center,
+        view.yaw,
+        view.pitch,
+        view.distance,
+        SCREEN_WIDTH,
+        SCREEN_HEIGHT,
+    );
+    let mut mejor: Option<(usize, f32)> = None;
+    for (indice, tri) in model.triangles.iter().enumerate() {
+        // La seleccion utiliza exactamente el mismo clipping del renderizador.
+        for screen in pipeline::prepare(tri.vertices, tri.uvs, &matrices) {
+            if let Some(depth) = profundidad_en(screen.map(|v| v.screen), x, y) {
+                if mejor.map_or(true, |(_, d)| depth < d) {
+                    mejor = Some((indice, depth));
+                }
+            }
+        }
+    }
+    mejor.map(|(indice, _)| indice)
+}
+
 fn main() {
     let (mut rl, thread) = init();
 
@@ -96,12 +243,10 @@ fn main() {
     };
     println!("Modelo cargado: {} triángulos", model.triangles.len());
 
-    let mut renderer = GpuRenderer::new(&mut rl, &thread);
-    if std::env::args().any(|a| a == "--verificar-gpu") {
-        renderer.verificar(&mut rl, &thread, &model);
-        return;
-    }
-    let mut limite_fps = false;
+    let mut framebuffer = Framebuffer::new(&mut rl, &thread, SCREEN_WIDTH, SCREEN_HEIGHT);
+    framebuffer.set_background_color(Color::BLACK);
+    let estrellas = estrellas::Estrellas::new(SCREEN_WIDTH, SCREEN_HEIGHT);
+    println!("Controles: WASD/flechas/arrastrar: rotar | rueda/Q/+/-: zoom | R: reiniciar | clic: seleccionar | C: quitar | E: fuego/laser | espacio/Enter: potencia | Escape: salir");
     let vista_inicial = View {
         yaw: 0.8,
         pitch: 0.4,
@@ -162,12 +307,8 @@ fn main() {
         view.yaw += entrada.yaw;
         view.pitch = (view.pitch + entrada.pitch).clamp(-1.5, 1.5);
         view.distance = (view.distance - entrada.zoom * model.size * 0.1).max(0.11);
-        if rl.is_key_pressed(KeyboardKey::KEY_F) {
-            limite_fps = !limite_fps;
-            rl.set_target_fps(if limite_fps { 60 } else { 0 });
-        }
         if let Some(clic) = entrada.clic {
-            seleccionado = gpu::seleccionar(&rl, &model, &view, clic);
+            seleccionado = triangulo_en(&model, &view, clic.x, clic.y);
             if let Some(i) = seleccionado {
                 println!("[{}]", i);
             }
@@ -177,59 +318,19 @@ fn main() {
             Propulsor::Fuego => (None, thrust_engine.intensity),
             Propulsor::Laser => (Some(&laser), laser.potencia * 0.6),
         };
-        renderer.actualizar(&view, &thrust_engine, luz_intensidad);
-
-        let mut d = rl.begin_drawing(&thread);
-        d.clear_background(Color::BLACK);
-        renderer.dibujar_fondo(&mut d);
-        renderer.dibujar(
-            &mut d,
+        render(
+            &mut framebuffer,
             &model,
             &view,
             seleccionado,
             &thrust_engine,
             haz_laser,
+            luz_intensidad,
+            &estrellas,
         );
-        d.draw_fps(10, 10);
-        d.draw_text(
-            if limite_fps {
-                "GPU | F: quitar limite 60 FPS"
-            } else {
-                "GPU | F: limitar a 60 FPS"
-            },
-            180,
-            10,
-            18,
-            Color::GREEN,
-        );
-        d.draw_text(
-            "Flechas/WASD/Mouse/Stick: Rotar | Rueda/Q/+/-: Zoom | R: Reiniciar | ESC: Salir",
-            10,
-            30,
-            20,
-            Color::WHITE,
-        );
-        let texto = match seleccionado {
-            Some(i) => format!(
-                "Triangulo [{}] (magenta) | Clic: seleccionar | C: quitar",
-                i
-            ),
-            None => "Clic sobre un triangulo para ver su indice".to_string(),
-        };
-        d.draw_text(&texto, 10, 55, 20, Color::YELLOW);
-        let nombre = match propulsor {
-            Propulsor::Fuego => "Fuego",
-            Propulsor::Laser => "Laser rojo",
-        };
-        d.draw_text(
-            &format!(
-                "Propulsor: {} | E: cambiar propulsor | SPACE: maxima potencia",
-                nombre
-            ),
-            10,
-            80,
-            20,
-            Color::ORANGE,
-        );
+
+        let mut d = rl.begin_drawing(&thread);
+        framebuffer.render_buffer(&mut d);
+        // Unica operacion de dibujo raylib: presentar la imagen calculada en CPU.
     }
 }

@@ -29,6 +29,23 @@ impl Band<'_> {
         self.zbuffer.fill(f32::INFINITY);
     }
 
+    /// Fondo: escritura de color exclusivamente, sin tocar la profundidad.
+    pub fn background_pixel(&mut self, x: i32, y: i32, color: Color) {
+        if x < 0 || x >= self.width || y < self.y0 || y >= self.y1 {
+            return;
+        }
+        let index = ((y - self.y0) * self.width + x) as usize * 4;
+        self.pixels[index..index + 4].copy_from_slice(&[color.r, color.g, color.b, 255]);
+    }
+
+    pub fn visible(&self, x: i32, y: i32, depth: f32) -> bool {
+        if x < 0 || x >= self.width || y < self.y0 || y >= self.y1 || !depth.is_finite() {
+            return false;
+        }
+        let index = ((y - self.y0) * self.width + x) as usize;
+        depth < self.zbuffer[index]
+    }
+
     pub fn set_current_color(&mut self, color: Color) {
         self.current_color = color;
     }
@@ -105,7 +122,12 @@ impl Framebuffer {
     where
         F: Fn(&mut Band) + Sync,
     {
-        let fondo = [self.background_color.r, self.background_color.g, self.background_color.b, 255];
+        let fondo = [
+            self.background_color.r,
+            self.background_color.g,
+            self.background_color.b,
+            255,
+        ];
         let ancho = self.width as usize;
         let franjas: Vec<Band> = self
             .pixels
@@ -125,7 +147,9 @@ impl Framebuffer {
             })
             .collect();
 
-        let hilos = std::thread::available_parallelism().map_or(4, |n| n.get()).min(franjas.len());
+        let hilos = std::thread::available_parallelism()
+            .map_or(4, |n| n.get())
+            .min(franjas.len());
         let cola = Mutex::new(franjas);
         let dibujar = &dibujar;
         let cola = &cola;
@@ -146,11 +170,56 @@ impl Framebuffer {
         });
     }
 
-
     pub fn render_buffer(&mut self, d: &mut RaylibDrawHandle) {
         self.texture
             .update_texture(&self.pixels)
             .expect("No se pudo actualizar la textura del framebuffer");
         d.draw_texture(&self.texture, 0, 0, Color::WHITE);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn opaque_depth_and_background() {
+        let mut pixels = vec![0; 4];
+        let mut z = vec![f32::INFINITY];
+        let mut b = Band {
+            width: 1,
+            y0: 0,
+            y1: 1,
+            pixels: &mut pixels,
+            zbuffer: &mut z,
+            current_color: Color::WHITE,
+        };
+        b.background_pixel(0, 0, Color::WHITE);
+        assert!(b.visible(0, 0, 100.)); // El cielo no escribe profundidad.
+        b.set_current_color(Color::new(255, 0, 0, 255));
+        b.point(0, 0, 2.);
+        b.set_current_color(Color::new(0, 0, 255, 255));
+        b.point(0, 0, 3.);
+        assert_eq!(&b.pixels[..4], &[255, 0, 0, 255]);
+        b.point(0, 0, 1.);
+        assert_eq!(&b.pixels[..4], &[0, 0, 255, 255]);
+        assert_eq!(b.zbuffer[0], 1.);
+    }
+    #[test]
+    fn transparency_tests_depth_without_writing_it() {
+        let mut pixels = vec![0, 0, 0, 255];
+        let mut z = vec![2.];
+        let mut b = Band {
+            width: 1,
+            y0: 0,
+            y1: 1,
+            pixels: &mut pixels,
+            zbuffer: &mut z,
+            current_color: Color::new(255, 0, 0, 128),
+        };
+        b.point(0, 0, 3.);
+        assert_eq!(b.pixels[0], 0);
+        b.point(0, 0, 1.);
+        assert!(b.pixels[0] > 0);
+        assert_eq!(b.zbuffer[0], 2.);
     }
 }
