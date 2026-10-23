@@ -1,19 +1,13 @@
-mod framebuffer;
+mod estrellas;
+mod gpu;
 mod laser;
-mod luz;
-mod triangle;
 mod thrust;
-mod particle_renderer;
 
-use cohete::color::Relleno;
 use cohete::controles::Controles;
 use cohete::obj::Model;
-use framebuffer::Framebuffer;
+use gpu::GpuRenderer;
 use laser::Laser;
-use particle_renderer::ParticulaPantalla;
-use luz::{sombrear, Sombreado};
 use raylib::prelude::*;
-use triangle::{profundidad_en, triangle};
 use thrust::ThrustEngine;
 
 const SCREEN_WIDTH: i32 = 1200;
@@ -34,11 +28,16 @@ struct View {
 }
 
 fn init() -> (RaylibHandle, RaylibThread) {
+    let mut flags = raylib::ffi::ConfigFlags::FLAG_WINDOW_HIGHDPI as u32;
+    if std::env::args().any(|a| a == "--verificar-gpu") {
+        flags |= raylib::ffi::ConfigFlags::FLAG_WINDOW_HIDDEN as u32;
+    }
+    unsafe { raylib::ffi::SetConfigFlags(flags); }
     let (mut rl, thread) = raylib::init()
         .size(SCREEN_WIDTH, SCREEN_HEIGHT)
-        .title("Software Renderer")
+        .title("CargaModelo - GPU / raylib")
         .build();
-    rl.set_target_fps(60);
+    rl.set_target_fps(0); // F: alternar entre 60 FPS y sin limite para comparar.
     (rl, thread)
 }
 
@@ -51,24 +50,6 @@ fn rotar(v: Vector3, view: &View) -> Vector3 {
     let y = v.y * cos_p - z * sin_p;
     let z = v.y * sin_p + z * cos_p;
     Vector3::new(x, y, z)
-}
-
-fn proyectar(r: Vector3, view: &View, focal: f32) -> Option<Vector3> {
-    let depth = view.distance - r.z;
-    if depth <= 0.1 {
-        return None;
-    }
-
-    let scale = focal / depth;
-    Some(Vector3::new(
-        SCREEN_WIDTH as f32 / 2.0 + r.x * scale,
-        SCREEN_HEIGHT as f32 / 2.0 - r.y * scale,
-        depth,
-    ))
-}
-
-fn project(v: Vector3, view: &View, focal: f32) -> Option<Vector3> {
-    proyectar(rotar(v, view), view, focal)
 }
 
 // Boquilla del propulsor en el espacio del modelo (centrado): punto medio de los triángulos 42 y 120,
@@ -98,156 +79,6 @@ fn boquilla(model: &Model) -> Option<(Vector3, Vector3, f32)> {
     Some((pos, dir, radio * 0.6))
 }
 
-fn sombreado_cara_con_propulsor(rotados: &[Vector3; 3], view: &View, thrust_light: Option<(Vector3, f32)>) -> Sombreado {
-    let normal = (rotados[1] - rotados[0]).cross(rotados[2] - rotados[0]);
-    if normal.length() < 1e-6 {
-        return Sombreado::NINGUNO;
-    }
-    let mut normal = normal.normalized();
-
-    let centro = (rotados[0] + rotados[1] + rotados[2]) / 3.0;
-    let hacia_camara = (Vector3::new(0.0, 0.0, view.distance) - centro).normalized();
-    if normal.dot(hacia_camara) < 0.0 {
-        normal = -normal;
-    }
-    
-    // Calcular iluminación base
-    let mut sombra = sombrear(normal, hacia_camara);
-    
-    // Agregar iluminación del propulsor si está cerca
-    if let Some((light_pos, intensidad)) = thrust_light {
-        let distancia = (light_pos - centro).length();
-        if distancia > 1e-4 && distancia < 9.0 {
-            let hacia_luz = (light_pos - centro) / distancia;
-            let contrib_luz = normal.dot(hacia_luz).max(0.0);
-            let atenuacion = 1.0 / (1.0 + distancia * distancia * 0.05);
-            sombra.difuso = (sombra.difuso + contrib_luz * atenuacion * 0.6 * intensidad).min(1.0);
-        }
-    }
-    
-    sombra
-}
-
-fn render(
-    framebuffer: &mut Framebuffer,
-    model: &Model,
-    view: &View,
-    seleccionado: Option<usize>,
-    thrust_engine: &ThrustEngine,
-    laser: Option<&Laser>,
-    luz_intensidad: f32,
-) {
-    let focal = SCREEN_HEIGHT as f32;
-    let resaltado = Relleno::Solido(COLOR_SELECCION);
-
-    type Visible<'a> = ([Vector3; 3], [Vector2; 3], &'a Relleno, Sombreado);
-    let mut opacos: Vec<Visible> = Vec::new();
-    let mut translucidos: Vec<Visible> = Vec::new();
-
-    // Calcular posición de luz del propulsor (ANTES de renderizar el modelo)
-    let light_pos = boquilla(model)
-        .map(|_| (rotar(thrust_engine.light_position, view), luz_intensidad));
-
-    for (indice, tri) in model.triangles.iter().enumerate() {
-        let rotados = tri.vertices.map(|v| rotar(v - model.center, view));
-        let projected: Vec<Vector3> = rotados
-            .iter()
-            .filter_map(|&r| proyectar(r, view, focal))
-            .collect();
-
-        if projected.len() == 3 {
-            let pantalla = [projected[0], projected[1], projected[2]];
-            let (relleno, sombreado) = if seleccionado == Some(indice) {
-                (&resaltado, Sombreado::NINGUNO)
-            } else {
-                // Usar iluminación del propulsor
-                (&tri.relleno, sombreado_cara_con_propulsor(&rotados, view, light_pos))
-            };
-            if relleno.es_opaco() {
-                opacos.push((pantalla, tri.uvs, relleno, sombreado));
-            } else {
-                translucidos.push((pantalla, tri.uvs, relleno, sombreado));
-            }
-        }
-    }
-
-    let profundidad = |t: &Visible| t.0[0].z + t.0[1].z + t.0[2].z;
-    translucidos.sort_by(|a, b| profundidad(b).total_cmp(&profundidad(a)));
-
-    // Las partículas se proyectan una sola vez y se ordenan de atrás hacia adelante
-    let particulas = preparar_particulas(thrust_engine, view, focal);
-
-    // El láser sale de la misma boquilla que el propulsor de fuego
-    let haz = laser.and_then(|l| {
-        let (pos, dir, _) = boquilla(model)?;
-        l.preparar(
-            pos + dir * 0.15,
-            dir,
-            |v| rotar(v, view),
-            view.distance,
-            SCREEN_WIDTH,
-            SCREEN_HEIGHT,
-            focal,
-        )
-    });
-
-    // Cada hilo dibuja una franja: primero el modelo, luego el láser y la nube del propulsor
-    framebuffer.render_parallel(|franja| {
-        for (pantalla, uvs, relleno, sombreado) in opacos.iter().chain(translucidos.iter()) {
-            triangle(franja, *pantalla, *uvs, relleno, *sombreado);
-        }
-        if let Some(haz) = &haz {
-            laser::dibujar_laser(franja, haz);
-        }
-        for p in &particulas {
-            particle_renderer::dibujar_particula(franja, p);
-        }
-    });
-}
-
-fn preparar_particulas(thrust_engine: &ThrustEngine, view: &View, focal: f32) -> Vec<ParticulaPantalla> {
-    let mut particulas: Vec<ParticulaPantalla> = thrust_engine
-        .get_particles()
-        .iter()
-        .filter_map(|p| {
-            particle_renderer::proyectar_particula(
-                rotar(p.position, view),
-                thrust_engine.get_particle_radius(p),
-                thrust_engine.get_particle_color(p),
-                view.distance,
-                SCREEN_WIDTH,
-                SCREEN_HEIGHT,
-                focal,
-            )
-        })
-        .collect();
-    particulas.sort_by(|a, b| b.depth.total_cmp(&a.depth));
-    particulas
-}
-
-fn triangulo_en(model: &Model, view: &View, x: f32, y: f32) -> Option<usize> {
-    let focal = SCREEN_HEIGHT as f32;
-    let mut mejor: Option<(usize, f32)> = None;
-
-    for (indice, tri) in model.triangles.iter().enumerate() {
-        let projected: Vec<Vector3> = tri
-            .vertices
-            .iter()
-            .filter_map(|&v| project(v - model.center, view, focal))
-            .collect();
-        if projected.len() != 3 {
-            continue;
-        }
-        let pantalla = [projected[0], projected[1], projected[2]];
-        if let Some(depth) = profundidad_en(pantalla, x, y) {
-            if mejor.map_or(true, |(_, d)| depth < d) {
-                mejor = Some((indice, depth));
-            }
-        }
-    }
-    mejor.map(|(indice, _)| indice)
-}
-
 fn main() {
     let (mut rl, thread) = init();
 
@@ -265,8 +96,12 @@ fn main() {
     };
     println!("Modelo cargado: {} triángulos", model.triangles.len());
 
-    let mut framebuffer = Framebuffer::new(&mut rl, &thread, SCREEN_WIDTH, SCREEN_HEIGHT);
-    framebuffer.set_background_color(Color::new(20, 20, 30, 255));
+    let mut renderer = GpuRenderer::new(&mut rl, &thread);
+    if std::env::args().any(|a| a == "--verificar-gpu") {
+        renderer.verificar(&mut rl, &thread, &model);
+        return;
+    }
+    let mut limite_fps = false;
     let vista_inicial = View {
         yaw: 0.8,
         pitch: 0.4,
@@ -275,7 +110,7 @@ fn main() {
     let mut view = vista_inicial;
     let mut controles = Controles::new();
     let mut seleccionado: Option<usize> = None;
-    
+
     // Crear el motor de propulsión
     let mut thrust_engine = ThrustEngine::new();
     let mut laser = Laser::new();
@@ -287,7 +122,7 @@ fn main() {
         let now = std::time::Instant::now();
         let delta_time = now.duration_since(last_time).as_secs_f32();
         last_time = now;
-        
+
         let entrada = controles.leer(&rl);
         if entrada.reiniciar {
             view = vista_inicial;
@@ -304,11 +139,18 @@ fn main() {
         }
 
         // Space/Enter para máxima potencia
-        let encendido = rl.is_key_down(KeyboardKey::KEY_SPACE) || rl.is_key_down(KeyboardKey::KEY_ENTER);
+        let encendido =
+            rl.is_key_down(KeyboardKey::KEY_SPACE) || rl.is_key_down(KeyboardKey::KEY_ENTER);
 
         // Al cambiar de propulsor, la nube de fuego deja de emitir y se disipa sola
         thrust_engine.intensity = match propulsor {
-            Propulsor::Fuego => if encendido { 1.0 } else { 0.2 },
+            Propulsor::Fuego => {
+                if encendido {
+                    1.0
+                } else {
+                    0.2
+                }
+            }
             Propulsor::Laser => 0.0,
         };
         laser.update(delta_time, if encendido { 1.0 } else { 0.7 });
@@ -316,29 +158,62 @@ fn main() {
         if let Some((nozzle_pos, thrust_dir, nozzle_radius)) = boquilla(&model) {
             thrust_engine.update(delta_time, nozzle_pos, thrust_dir, nozzle_radius);
         }
-        
+
+        view.yaw += entrada.yaw;
+        view.pitch = (view.pitch + entrada.pitch).clamp(-1.5, 1.5);
+        view.distance = (view.distance - entrada.zoom * model.size * 0.1).max(0.11);
+        if rl.is_key_pressed(KeyboardKey::KEY_F) {
+            limite_fps = !limite_fps;
+            rl.set_target_fps(if limite_fps { 60 } else { 0 });
+        }
         if let Some(clic) = entrada.clic {
-            seleccionado = triangulo_en(&model, &view, clic.x, clic.y);
+            seleccionado = gpu::seleccionar(&rl, &model, &view, clic);
             if let Some(i) = seleccionado {
                 println!("[{}]", i);
             }
         }
-        view.yaw += entrada.yaw;
-        view.pitch = (view.pitch + entrada.pitch).clamp(-1.5, 1.5);
-        view.distance = (view.distance - entrada.zoom * model.size * 0.1).max(1.0);
 
         let (haz_laser, luz_intensidad) = match propulsor {
             Propulsor::Fuego => (None, thrust_engine.intensity),
             Propulsor::Laser => (Some(&laser), laser.potencia * 0.6),
         };
-        render(&mut framebuffer, &model, &view, seleccionado, &thrust_engine, haz_laser, luz_intensidad);
+        renderer.actualizar(&view, &thrust_engine, luz_intensidad);
 
         let mut d = rl.begin_drawing(&thread);
-        framebuffer.render_buffer(&mut d);
+        d.clear_background(Color::BLACK);
+        renderer.dibujar_fondo(&mut d);
+        renderer.dibujar(
+            &mut d,
+            &model,
+            &view,
+            seleccionado,
+            &thrust_engine,
+            haz_laser,
+        );
         d.draw_fps(10, 10);
-        d.draw_text("Flechas/WASD/Mouse/Stick: Rotar | Rueda/Q/+/-: Zoom | R: Reiniciar | ESC: Salir", 10, 30, 20, Color::WHITE);
+        d.draw_text(
+            if limite_fps {
+                "GPU | F: quitar limite 60 FPS"
+            } else {
+                "GPU | F: limitar a 60 FPS"
+            },
+            180,
+            10,
+            18,
+            Color::GREEN,
+        );
+        d.draw_text(
+            "Flechas/WASD/Mouse/Stick: Rotar | Rueda/Q/+/-: Zoom | R: Reiniciar | ESC: Salir",
+            10,
+            30,
+            20,
+            Color::WHITE,
+        );
         let texto = match seleccionado {
-            Some(i) => format!("Triangulo [{}] (magenta) | Clic: seleccionar | C: quitar", i),
+            Some(i) => format!(
+                "Triangulo [{}] (magenta) | Clic: seleccionar | C: quitar",
+                i
+            ),
             None => "Clic sobre un triangulo para ver su indice".to_string(),
         };
         d.draw_text(&texto, 10, 55, 20, Color::YELLOW);
@@ -347,7 +222,10 @@ fn main() {
             Propulsor::Laser => "Laser rojo",
         };
         d.draw_text(
-            &format!("Propulsor: {} | E: cambiar propulsor | SPACE: maxima potencia", nombre),
+            &format!(
+                "Propulsor: {} | E: cambiar propulsor | SPACE: maxima potencia",
+                nombre
+            ),
             10,
             80,
             20,

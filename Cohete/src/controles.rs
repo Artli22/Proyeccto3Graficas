@@ -43,12 +43,12 @@ impl Controles {
         entrada.yaw += eje(
             &[KeyboardKey::KEY_LEFT, KeyboardKey::KEY_A],
             &[KeyboardKey::KEY_RIGHT, KeyboardKey::KEY_D],
-        ) * VELOCIDAD_ROTACION;
+        ) * VELOCIDAD_ROTACION * (rl.get_frame_time() * 60.0).min(3.0);
         entrada.pitch += eje(
             &[KeyboardKey::KEY_DOWN, KeyboardKey::KEY_S],
             &[KeyboardKey::KEY_UP, KeyboardKey::KEY_W],
-        ) * VELOCIDAD_ROTACION;
-        entrada.zoom += eje(&[KeyboardKey::KEY_MINUS, KeyboardKey::KEY_Q], &[KeyboardKey::KEY_EQUAL]) * 0.2;
+        ) * VELOCIDAD_ROTACION * (rl.get_frame_time() * 60.0).min(3.0);
+        entrada.zoom += eje(&[KeyboardKey::KEY_MINUS, KeyboardKey::KEY_Q], &[KeyboardKey::KEY_EQUAL]) * 0.2 * (rl.get_frame_time() * 60.0).min(3.0);
 
         if rl.is_key_pressed(KeyboardKey::KEY_R) {
             entrada.reiniciar = true;
@@ -97,14 +97,14 @@ impl Controles {
             if valor.abs() < ZONA_MUERTA { 0.0 } else { valor }
         };
 
-        entrada.yaw += eje(GamepadAxis::GAMEPAD_AXIS_LEFT_X) * VELOCIDAD_ROTACION;
-        entrada.pitch -= eje(GamepadAxis::GAMEPAD_AXIS_LEFT_Y) * VELOCIDAD_ROTACION;
-        entrada.zoom -= eje(GamepadAxis::GAMEPAD_AXIS_RIGHT_Y) * 0.3;
+        entrada.yaw += eje(GamepadAxis::GAMEPAD_AXIS_LEFT_X) * VELOCIDAD_ROTACION * (rl.get_frame_time() * 60.0).min(3.0);
+        entrada.pitch -= eje(GamepadAxis::GAMEPAD_AXIS_LEFT_Y) * VELOCIDAD_ROTACION * (rl.get_frame_time() * 60.0).min(3.0);
+        entrada.zoom -= eje(GamepadAxis::GAMEPAD_AXIS_RIGHT_Y) * 0.3 * (rl.get_frame_time() * 60.0).min(3.0);
         if rl.is_gamepad_button_down(GAMEPAD, GamepadButton::GAMEPAD_BUTTON_RIGHT_TRIGGER_1) {
-            entrada.zoom += 0.2;
+            entrada.zoom += 0.2 * (rl.get_frame_time() * 60.0).min(3.0);
         }
         if rl.is_gamepad_button_down(GAMEPAD, GamepadButton::GAMEPAD_BUTTON_LEFT_TRIGGER_1) {
-            entrada.zoom -= 0.2;
+            entrada.zoom -= 0.2 * (rl.get_frame_time() * 60.0).min(3.0);
         }
 
         if rl.is_gamepad_button_pressed(GAMEPAD, GamepadButton::GAMEPAD_BUTTON_RIGHT_FACE_DOWN) {
