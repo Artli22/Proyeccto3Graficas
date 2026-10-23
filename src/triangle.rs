@@ -1,5 +1,5 @@
-use crate::color::Relleno;
-use crate::framebuffer::Framebuffer;
+use cohete::color::Relleno;
+use crate::framebuffer::Band;
 use crate::luz::Sombreado;
 use raylib::prelude::{Vector2, Vector3};
 
@@ -24,7 +24,7 @@ pub fn profundidad_en(v: [Vector3; 3], px: f32, py: f32) -> Option<f32> {
 }
 
 pub fn triangle(
-    framebuffer: &mut Framebuffer,
+    framebuffer: &mut Band,
     v: [Vector3; 3],
     uvs: [Vector2; 3],
     relleno: &Relleno,
@@ -38,8 +38,8 @@ pub fn triangle(
 
     let min_x = a.x.min(b.x).min(c.x).floor().max(0.0) as i32;
     let max_x = a.x.max(b.x).max(c.x).ceil().min((framebuffer.width - 1) as f32) as i32;
-    let min_y = a.y.min(b.y).min(c.y).floor().max(0.0) as i32;
-    let max_y = a.y.max(b.y).max(c.y).ceil().min((framebuffer.height - 1) as f32) as i32;
+    let min_y = (a.y.min(b.y).min(c.y).floor().max(0.0) as i32).max(framebuffer.y0);
+    let max_y = (a.y.max(b.y).max(c.y).ceil().min(framebuffer.y1 as f32 - 1.0) as i32).min(framebuffer.y1 - 1);
 
     let (inv_a, inv_b, inv_c) = (1.0 / a.z, 1.0 / b.z, 1.0 / c.z);
 
