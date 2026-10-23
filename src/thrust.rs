@@ -22,9 +22,15 @@ impl ThrustEngine {
             particles: Vec::with_capacity(4000),
             emit_accumulator: 0.0,
             rng_state: 0x9E37_79B9,
-            intensity: 0.3,
+            intensity: 0.0,
             light_position: Vector3::zero(),
         }
+    }
+
+    pub fn apagar(&mut self) {
+        self.intensity = 0.;
+        self.emit_accumulator = 0.;
+        self.particles.clear();
     }
 
     fn rand(&mut self) -> f32 {
@@ -38,7 +44,13 @@ impl ThrustEngine {
     }
 
     // `nozzle_pos` está en el espacio del modelo (centrado); `nozzle_dir` es la salida del gas.
-    pub fn update(&mut self, delta_time: f32, nozzle_pos: Vector3, nozzle_dir: Vector3, nozzle_radius: f32) {
+    pub fn update(
+        &mut self,
+        delta_time: f32,
+        nozzle_pos: Vector3,
+        nozzle_dir: Vector3,
+        nozzle_radius: f32,
+    ) {
         let dt = delta_time.min(0.05);
         self.light_position = nozzle_pos + nozzle_dir * 1.0;
 
@@ -51,7 +63,11 @@ impl ThrustEngine {
         });
 
         let eje = nozzle_dir.normalized();
-        let ref_axis = if eje.y.abs() < 0.9 { Vector3::new(0.0, 1.0, 0.0) } else { Vector3::new(1.0, 0.0, 0.0) };
+        let ref_axis = if eje.y.abs() < 0.9 {
+            Vector3::new(0.0, 1.0, 0.0)
+        } else {
+            Vector3::new(1.0, 0.0, 0.0)
+        };
         let u = eje.cross(ref_axis).normalized();
         let v = eje.cross(u);
 
@@ -71,7 +87,13 @@ impl ThrustEngine {
 
             let lifetime = 1.0 + self.rand() * 0.9;
             let size_factor = 0.8 + self.rand() * 0.5;
-            self.particles.push(ThrustParticle { position, velocity, age: 0.0, lifetime, size_factor });
+            self.particles.push(ThrustParticle {
+                position,
+                velocity,
+                age: 0.0,
+                lifetime,
+                size_factor,
+            });
         }
     }
 
@@ -90,13 +112,21 @@ impl ThrustEngine {
 
         let (r, g, b) = if progress < 0.3 {
             let t = progress / 0.3;
-            (255, (225.0 * (1.0 - t * 0.35)) as u8, (40.0 * (1.0 - t)) as u8) // Naranja brillante
+            (
+                255,
+                (225.0 * (1.0 - t * 0.35)) as u8,
+                (40.0 * (1.0 - t)) as u8,
+            ) // Naranja brillante
         } else if progress < 0.7 {
             let t = (progress - 0.3) / 0.4;
             (255, (145.0 * (1.0 - t)) as u8, (50.0 * t) as u8) // Naranja -> rojo
         } else {
             let t = (progress - 0.7) / 0.3;
-            (200 - (100.0 * t) as u8, 100 - (80.0 * t) as u8, 80 - (60.0 * t) as u8) // Humo gris
+            (
+                200 - (100.0 * t) as u8,
+                100 - (80.0 * t) as u8,
+                80 - (60.0 * t) as u8,
+            ) // Humo gris
         };
 
         let alpha = if progress < 0.5 {
@@ -106,5 +136,21 @@ impl ThrustEngine {
         };
 
         Color::new(r, g, b, alpha.clamp(0.0, 255.0) as u8)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn apagar_removes_all_particles_immediately() {
+        let mut engine = ThrustEngine::new();
+        engine.intensity = 1.;
+        engine.update(0.02, Vector3::zero(), Vector3::new(0., 0., 1.), 0.3);
+        assert!(!engine.get_particles().is_empty());
+        engine.apagar();
+        assert!(engine.get_particles().is_empty());
+        assert_eq!(engine.intensity, 0.);
+        assert_eq!(engine.emit_accumulator, 0.);
     }
 }

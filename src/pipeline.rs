@@ -40,6 +40,28 @@ pub struct Uniforms {
     pub height: f32,
 }
 impl Uniforms {
+    pub fn scene(model: Mat4, view: Mat4, width: i32, height: i32) -> Self {
+        let mut uniforms = Self::new(Vector3::zero(), 0., 0., 0., width, height);
+        uniforms.model = model;
+        uniforms.view = view;
+        uniforms
+    }
+    pub fn camera_point(&self, world: Vector3) -> Vector3 {
+        let p = self.view.transform([world.x, world.y, world.z, 1.]);
+        Vector3::new(p[0], p[1], p[2])
+    }
+    pub fn camera_direction(&self, direction: Vector3) -> Vector3 {
+        let p = self
+            .view
+            .transform([direction.x, direction.y, direction.z, 0.]);
+        Vector3::new(p[0], p[1], p[2])
+    }
+    // Compatibilidad con los efectos CPU originales: profundidad = -z, distancia=0.
+    pub fn effect_point(&self, world: Vector3) -> Vector3 {
+        let p = self.camera_point(world);
+        Vector3::new(p.x, p.y, -p.z)
+    }
+
     pub fn new(
         center: Vector3,
         yaw: f32,

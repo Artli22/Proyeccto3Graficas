@@ -32,7 +32,15 @@ pub struct LaserPantalla {
 
 impl Laser {
     pub fn new() -> Self {
-        Laser { potencia: 0.3, tiempo: 0.0 }
+        Laser {
+            potencia: 0.0,
+            tiempo: 0.0,
+        }
+    }
+
+    pub fn apagar(&mut self) {
+        self.potencia = 0.;
+        self.tiempo = 0.;
     }
 
     pub fn update(&mut self, delta_time: f32, objetivo: f32) {
@@ -89,8 +97,24 @@ impl Laser {
         let brillo = Color::new(255, 40, 30, (190.0 * potencia) as u8);
         let nucleo = Color::new(255, 225, 215, (235.0 * potencia) as u8);
         let destello: Vec<ParticulaPantalla> = [
-            proyectar_particula(a, 0.9 * potencia + 0.2, brillo, view_distance, screen_width, screen_height, focal),
-            proyectar_particula(a, 0.3 * potencia + 0.08, nucleo, view_distance, screen_width, screen_height, focal),
+            proyectar_particula(
+                a,
+                0.9 * potencia + 0.2,
+                brillo,
+                view_distance,
+                screen_width,
+                screen_height,
+                focal,
+            ),
+            proyectar_particula(
+                a,
+                0.3 * potencia + 0.08,
+                nucleo,
+                view_distance,
+                screen_width,
+                screen_height,
+                focal,
+            ),
         ]
         .into_iter()
         .flatten()
@@ -167,5 +191,19 @@ fn dibujar_haz(band: &mut Band, h: &HazPantalla) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn apagar_removes_power_without_fade() {
+        let mut laser = Laser::new();
+        laser.update(0.1, 1.);
+        assert!(laser.potencia > 0.);
+        laser.apagar();
+        assert_eq!(laser.potencia, 0.);
+        assert_eq!(laser.tiempo, 0.);
     }
 }
