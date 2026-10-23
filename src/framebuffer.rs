@@ -146,6 +146,7 @@ impl Framebuffer {
         });
     }
 
+
     pub fn render_buffer(&mut self, d: &mut RaylibDrawHandle) {
         self.texture
             .update_texture(&self.pixels)

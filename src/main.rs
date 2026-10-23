@@ -1,4 +1,5 @@
 mod framebuffer;
+mod laser;
 mod luz;
 mod triangle;
 mod thrust;
@@ -8,6 +9,7 @@ use cohete::color::Relleno;
 use cohete::controles::Controles;
 use cohete::obj::Model;
 use framebuffer::Framebuffer;
+use laser::Laser;
 use particle_renderer::ParticulaPantalla;
 use luz::{sombrear, Sombreado};
 use raylib::prelude::*;
@@ -17,6 +19,12 @@ use thrust::ThrustEngine;
 const SCREEN_WIDTH: i32 = 1200;
 const SCREEN_HEIGHT: i32 = 800;
 const COLOR_SELECCION: Color = Color::new(255, 0, 255, 255);
+
+#[derive(Clone, Copy, PartialEq)]
+enum Propulsor {
+    Fuego,
+    Laser,
+}
 
 #[derive(Clone, Copy)]
 struct View {
@@ -120,7 +128,15 @@ fn sombreado_cara_con_propulsor(rotados: &[Vector3; 3], view: &View, thrust_ligh
     sombra
 }
 
-fn render(framebuffer: &mut Framebuffer, model: &Model, view: &View, seleccionado: Option<usize>, thrust_engine: &ThrustEngine) {
+fn render(
+    framebuffer: &mut Framebuffer,
+    model: &Model,
+    view: &View,
+    seleccionado: Option<usize>,
+    thrust_engine: &ThrustEngine,
+    laser: Option<&Laser>,
+    luz_intensidad: f32,
+) {
     let focal = SCREEN_HEIGHT as f32;
     let resaltado = Relleno::Solido(COLOR_SELECCION);
 
@@ -130,7 +146,7 @@ fn render(framebuffer: &mut Framebuffer, model: &Model, view: &View, seleccionad
 
     // Calcular posición de luz del propulsor (ANTES de renderizar el modelo)
     let light_pos = boquilla(model)
-        .map(|_| (rotar(thrust_engine.light_position, view), thrust_engine.intensity));
+        .map(|_| (rotar(thrust_engine.light_position, view), luz_intensidad));
 
     for (indice, tri) in model.triangles.iter().enumerate() {
         let rotados = tri.vertices.map(|v| rotar(v - model.center, view));
@@ -161,10 +177,27 @@ fn render(framebuffer: &mut Framebuffer, model: &Model, view: &View, seleccionad
     // Las partículas se proyectan una sola vez y se ordenan de atrás hacia adelante
     let particulas = preparar_particulas(thrust_engine, view, focal);
 
-    // Cada hilo dibuja una franja: primero el modelo y luego la nube del propulsor
+    // El láser sale de la misma boquilla que el propulsor de fuego
+    let haz = laser.and_then(|l| {
+        let (pos, dir, _) = boquilla(model)?;
+        l.preparar(
+            pos + dir * 0.15,
+            dir,
+            |v| rotar(v, view),
+            view.distance,
+            SCREEN_WIDTH,
+            SCREEN_HEIGHT,
+            focal,
+        )
+    });
+
+    // Cada hilo dibuja una franja: primero el modelo, luego el láser y la nube del propulsor
     framebuffer.render_parallel(|franja| {
         for (pantalla, uvs, relleno, sombreado) in opacos.iter().chain(translucidos.iter()) {
             triangle(franja, *pantalla, *uvs, relleno, *sombreado);
+        }
+        if let Some(haz) = &haz {
+            laser::dibujar_laser(franja, haz);
         }
         for p in &particulas {
             particle_renderer::dibujar_particula(franja, p);
@@ -245,6 +278,8 @@ fn main() {
     
     // Crear el motor de propulsión
     let mut thrust_engine = ThrustEngine::new();
+    let mut laser = Laser::new();
+    let mut propulsor = Propulsor::Fuego;
     let mut last_time = std::time::Instant::now();
 
     while !rl.window_should_close() {
@@ -260,14 +295,24 @@ fn main() {
         if entrada.quitar_seleccion {
             seleccionado = None;
         }
-        
-        // Controlar intensidad del propulsor (Space/Enter para activar)
-        thrust_engine.intensity = if rl.is_key_down(KeyboardKey::KEY_SPACE) || rl.is_key_down(KeyboardKey::KEY_ENTER) {
-            1.0  // Máxima potencia
-        } else {
-            0.2  // Muy débil en idle
+
+        if rl.is_key_pressed(KeyboardKey::KEY_E) {
+            propulsor = match propulsor {
+                Propulsor::Fuego => Propulsor::Laser,
+                Propulsor::Laser => Propulsor::Fuego,
+            };
+        }
+
+        // Space/Enter para máxima potencia
+        let encendido = rl.is_key_down(KeyboardKey::KEY_SPACE) || rl.is_key_down(KeyboardKey::KEY_ENTER);
+
+        // Al cambiar de propulsor, la nube de fuego deja de emitir y se disipa sola
+        thrust_engine.intensity = match propulsor {
+            Propulsor::Fuego => if encendido { 1.0 } else { 0.2 },
+            Propulsor::Laser => 0.0,
         };
-        
+        laser.update(delta_time, if encendido { 1.0 } else { 0.7 });
+
         if let Some((nozzle_pos, thrust_dir, nozzle_radius)) = boquilla(&model) {
             thrust_engine.update(delta_time, nozzle_pos, thrust_dir, nozzle_radius);
         }
@@ -282,16 +327,31 @@ fn main() {
         view.pitch = (view.pitch + entrada.pitch).clamp(-1.5, 1.5);
         view.distance = (view.distance - entrada.zoom * model.size * 0.1).max(1.0);
 
-        render(&mut framebuffer, &model, &view, seleccionado, &thrust_engine);
+        let (haz_laser, luz_intensidad) = match propulsor {
+            Propulsor::Fuego => (None, thrust_engine.intensity),
+            Propulsor::Laser => (Some(&laser), laser.potencia * 0.6),
+        };
+        render(&mut framebuffer, &model, &view, seleccionado, &thrust_engine, haz_laser, luz_intensidad);
 
         let mut d = rl.begin_drawing(&thread);
         framebuffer.render_buffer(&mut d);
         d.draw_fps(10, 10);
-        d.draw_text("Flechas/WASD/Mouse/Stick: Rotar | Rueda/Q/E: Zoom | R: Reiniciar | SPACE: Encender propulsor | ESC: Salir", 10, 30, 20, Color::WHITE);
+        d.draw_text("Flechas/WASD/Mouse/Stick: Rotar | Rueda/Q/+/-: Zoom | R: Reiniciar | ESC: Salir", 10, 30, 20, Color::WHITE);
         let texto = match seleccionado {
             Some(i) => format!("Triangulo [{}] (magenta) | Clic: seleccionar | C: quitar", i),
             None => "Clic sobre un triangulo para ver su indice".to_string(),
         };
         d.draw_text(&texto, 10, 55, 20, Color::YELLOW);
+        let nombre = match propulsor {
+            Propulsor::Fuego => "Fuego",
+            Propulsor::Laser => "Laser rojo",
+        };
+        d.draw_text(
+            &format!("Propulsor: {} | E: cambiar propulsor | SPACE: maxima potencia", nombre),
+            10,
+            80,
+            20,
+            Color::ORANGE,
+        );
     }
 }

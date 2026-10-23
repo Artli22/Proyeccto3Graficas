@@ -48,7 +48,7 @@ impl Controles {
             &[KeyboardKey::KEY_DOWN, KeyboardKey::KEY_S],
             &[KeyboardKey::KEY_UP, KeyboardKey::KEY_W],
         ) * VELOCIDAD_ROTACION;
-        entrada.zoom += eje(&[KeyboardKey::KEY_MINUS, KeyboardKey::KEY_Q], &[KeyboardKey::KEY_EQUAL, KeyboardKey::KEY_E]) * 0.2;
+        entrada.zoom += eje(&[KeyboardKey::KEY_MINUS, KeyboardKey::KEY_Q], &[KeyboardKey::KEY_EQUAL]) * 0.2;
 
         if rl.is_key_pressed(KeyboardKey::KEY_R) {
             entrada.reiniciar = true;
