@@ -14,14 +14,17 @@ pub struct Datos {
     pub landing_status: String,
     pub landing_progress: f32,
 }
+fn miles(n: u32) -> String {
+    if n >= 1000 {
+        format!("{},{:03}", n / 1000, n % 1000)
+    } else {
+        n.to_string()
+    }
+}
 impl Datos {
     pub fn new(nave: &Nave, power: f32, active: bool) -> Self {
         let n = nave.speed_kmh.clamp(0., Nave::MAX_SPEED_KMH).round() as u32;
-        let speed = if n >= 1000 {
-            format!("{},{:03}", n / 1000, n % 1000)
-        } else {
-            n.to_string()
-        };
+        let speed = miles(n);
         Self {
             speed,
             power: format!("POTENCIA {}%", (power * 100.).round() as u32),
@@ -159,7 +162,14 @@ pub fn dibujar(b: &mut Band, hud: &Datos, height: i32) {
         x + 14 + ((w - 28) as f32 * Nave::LASER_THRESHOLD_KMH / Nave::MAX_SPEED_KMH) as i32;
     rect(b, threshold, y + 98, 1, 14, Color::new(255, 190, 80, 255));
     text(b, x + 14, y + 116, "0", 1, muted);
-    text(b, x + w - 74, y + 116, "28,000", 1, muted);
+    text(
+        b,
+        x + w - 14 - 6 * miles(Nave::MAX_SPEED_KMH as u32).len() as i32,
+        y + 116,
+        &miles(Nave::MAX_SPEED_KMH as u32),
+        1,
+        muted,
+    );
     text(
         b,
         x + 14,
@@ -201,9 +211,9 @@ mod tests {
     #[test]
     fn speed_format_and_motor_status() {
         let mut ship = Nave::new();
-        ship.speed_kmh = 28_000.;
+        ship.speed_kmh = Nave::MAX_SPEED_KMH;
         let active = Datos::new(&ship, 0.6, true);
-        assert_eq!(active.speed, "28,000");
+        assert_eq!(active.speed, "300,000");
         assert_eq!(active.motor, "MOTOR LASER");
         let off = Datos::new(&ship, 0.6, false);
         assert_eq!(off.motor, "MOTOR APAGADO");

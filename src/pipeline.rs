@@ -3,7 +3,7 @@
 use raylib::prelude::{Vector2, Vector3};
 
 pub const NEAR: f32 = 0.1;
-pub const FAR: f32 = 10000.0;
+pub const FAR: f32 = 100000.0;
 #[derive(Clone, Copy, Debug)]
 pub struct Mat4(pub [[f32; 4]; 4]);
 impl Mat4 {

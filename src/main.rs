@@ -73,6 +73,42 @@ fn boquilla(model: &Model) -> Option<(Vector3, Vector3, f32)> {
     }
     Some((pos, dir, radio * 0.6))
 }
+type Visible<'a> = ([ScreenVertex; 3], &'a Relleno, ShaderParams);
+
+/// Transforma y recorta los triangulos de una malla. Con `eye_local` se descartan las caras
+/// traseras en espacio local antes de transformar (solo mallas cerradas con normales).
+fn agregar_malla<'a>(
+    malla: &'a planeta::Malla,
+    uniforms: &Uniforms,
+    eye: Vector3,
+    eye_local: Option<Vector3>,
+    salida: &mut Vec<Visible<'a>>,
+) {
+    for (i, (tri, relleno)) in malla.triangulos.iter().zip(&malla.rellenos).enumerate() {
+        if let Some(eye_local) = eye_local {
+            if malla.normales[i].dot(eye_local - tri[0]) <= 0. {
+                continue;
+            }
+        }
+        let transformed = std::array::from_fn::<_, 3, _>(|k| {
+            pipeline::vertex_shader(tri[k], Vector2::zero(), uniforms)
+        });
+        let p = transformed.map(|v| v.world);
+        let normal = (p[1] - p[0]).cross(p[2] - p[0]);
+        if normal.length() < 1e-9 {
+            continue;
+        }
+        let shader = ShaderParams {
+            normal: normal.normalized(),
+            eye,
+            engine_light: None,
+            unlit: false,
+        };
+        for clipped in pipeline::clip_triangle(transformed) {
+            salida.push((clipped.map(|v| pipeline::viewport(v, uniforms)), relleno, shader));
+        }
+    }
+}
 
 fn render(
     framebuffer: &mut Framebuffer,
@@ -91,8 +127,6 @@ fn render(
 ) {
     let focal = SCREEN_HEIGHT as f32;
     let resaltado = Relleno::Solido(COLOR_SELECCION);
-
-    type Visible<'a> = ([ScreenVertex; 3], &'a Relleno, ShaderParams);
 
     let mut opacos: Vec<Visible> = Vec::new();
     let mut translucidos: Vec<Visible> = Vec::new();
@@ -135,37 +169,20 @@ fn render(
         }
     }
 
-    // Planetas: mismo pipeline (modelo -> vista -> proyeccion -> clipping) con su propia matriz de modelo.
+    // Cuerpos celestes: mismo pipeline (modelo -> vista -> proyeccion -> clipping) con la matriz
+    // de cada uno. Se descartan los que quedan fuera de la vista y el detalle baja con la distancia.
     for planeta in &sistema.planetas {
+        let Some(radio_px) = planeta.proyeccion(matrices) else {
+            continue;
+        };
         let mut uniforms = *matrices;
         uniforms.model = planeta.matriz_modelo();
-        for (tri, relleno) in planeta.triangulos.iter().zip(&planeta.rellenos) {
-            let transformed = std::array::from_fn::<_, 3, _>(|i| {
-                pipeline::vertex_shader(tri[i], Vector2::zero(), &uniforms)
-            });
-            let p = transformed.map(|v| v.world);
-            let normal = (p[1] - p[0]).cross(p[2] - p[0]);
-            if normal.length() < 1e-6 {
-                continue;
-            }
-            let normal = normal.normalized();
-            // Descarte de caras traseras: la malla es cerrada y sus normales apuntan hacia afuera.
-            if normal.dot(camera.position - p[0]) <= 0. {
-                continue;
-            }
-            let shader = ShaderParams {
-                normal,
-                eye: camera.position,
-                engine_light: None,
-                unlit: false,
-            };
-            for clipped in pipeline::clip_triangle(transformed) {
-                let screen = clipped.map(|v| pipeline::viewport(v, matrices));
-                opacos.push((screen, relleno, shader));
-            }
+        let eye = planeta.a_local(camera.position - planeta.centro);
+        agregar_malla(planeta.malla_lod(radio_px), &uniforms, camera.position, Some(eye), &mut opacos);
+        if let Some(anillo) = &planeta.anillo {
+            agregar_malla(anillo, &uniforms, camera.position, None, &mut opacos);
         }
     }
-
     let profundidad = |t: &Visible| t.0[0].screen.z + t.0[1].screen.z + t.0[2].screen.z;
     translucidos.sort_by(|a, b| profundidad(b).total_cmp(&profundidad(a)));
 
@@ -282,7 +299,8 @@ fn main() {
     let mut sistema = SistemaPlanetario::nuevo();
     let mut gestor = GestorAterrizaje::nuevo();
     println!("W/S: subir/bajar nariz | A/D: girar izquierda/derecha | ESPACIO: acelerar (soltar: frenar) | 1/2/3: potencia 30/60/100% | laser automatico >1000 km/h | rueda/+/-: distancia de camara | R: reiniciar | clic: seleccionar | C: quitar | ESC: salir");
-    println!("ATERRIZAJE: apunta al planeta TERRA y avanza; el asistente reduce la velocidad al descender. Posado: A/D giran, ESPACIO despega.");
+    println!("SISTEMA: Mercurio, Venus, Terra (+Luna), Marte, Jupiter, Saturno, Urano, Neptuno y Pluton. TERRA esta al frente al iniciar.");
+    println!("ATERRIZAJE: apunta a un cuerpo y avanza; el asistente reduce la velocidad al descender. Posado: A/D giran, ESPACIO despega.");
     while !rl.window_should_close() {
         let now = std::time::Instant::now();
         let dt = now.duration_since(last).as_secs_f32().min(0.05);

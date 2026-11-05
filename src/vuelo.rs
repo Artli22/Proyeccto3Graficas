@@ -60,13 +60,13 @@ impl Nave {
         self.pitch = forward.y.clamp(-1., 1.).asin().clamp(-1.35, 1.35);
         self.base = None;
     }
-    pub const MAX_SPEED_KMH: f32 = 28_000.;
+    pub const MAX_SPEED_KMH: f32 = 300_000.;
     pub const LASER_THRESHOLD_KMH: f32 = 10_000.;
     // Escala explicita: el velocimetro corresponde al desplazamiento del mundo.
     pub const METERS_PER_UNIT: f32 = 100.;
-    pub const NORMAL_ACCEL: f32 = 450.; // km/h ganados por segundo al 100%
-    pub const LASER_ACCEL: f32 = 2_200.;
-    pub const BRAKING: f32 = 3_000.;
+    pub const NORMAL_ACCEL: f32 = 4_000.; // km/h ganados por segundo al 100%
+    pub const LASER_ACCEL: f32 = 60_000.;
+    pub const BRAKING: f32 = 60_000.;
 
     pub fn laser_mode(&self) -> bool {
         self.speed_kmh > Self::LASER_THRESHOLD_KMH
@@ -222,22 +222,22 @@ mod tests {
     fn acceleration_braking_and_cap() {
         let mut ship = Nave::new();
         ship.step(0., 0., true, 1., 1.);
-        assert!((ship.speed_kmh - 450.).abs() < 0.01);
+        assert!((ship.speed_kmh - Nave::NORMAL_ACCEL).abs() < 0.01);
         assert!(ship.position.z < 0.);
         ship.step(0., 0., true, 1., 100.);
-        assert_eq!(ship.speed_kmh, 28_000.);
+        assert_eq!(ship.speed_kmh, Nave::MAX_SPEED_KMH);
         ship.step(0., 0., false, 1., 1.);
-        assert_eq!(ship.speed_kmh, 25_000.);
+        assert_eq!(ship.speed_kmh, Nave::MAX_SPEED_KMH - Nave::BRAKING);
         ship.step(0., 0., false, 1., 20.);
         assert_eq!(ship.speed_kmh, 0.);
         assert_eq!(ship.velocity.length(), 0.);
     }
     #[test]
-    fn threshold_is_strictly_above_1000() {
+    fn threshold_is_strictly_above_laser_limit() {
         let mut ship = Nave::new();
-        ship.speed_kmh = 1000.;
+        ship.speed_kmh = Nave::LASER_THRESHOLD_KMH;
         assert!(!ship.laser_mode());
-        ship.speed_kmh = 1000.1;
+        ship.speed_kmh = Nave::LASER_THRESHOLD_KMH + 0.1;
         assert!(ship.laser_mode());
     }
     #[test]
@@ -246,7 +246,7 @@ mod tests {
         let medium = Nave::integrate_speed(0., 0.6, 1.).0;
         let full = Nave::integrate_speed(0., 1., 1.).0;
         assert!(slow < medium && medium < full);
-        assert!((slow - 135.).abs() < 0.01);
+        assert!((slow - Nave::NORMAL_ACCEL * 0.3).abs() < 0.01);
     }
     #[test]
     fn timestep_independence_across_boundaries() {
@@ -264,11 +264,11 @@ mod tests {
     #[test]
     fn distance_and_speed_use_same_units() {
         let mut ship = Nave::new();
-        ship.speed_kmh = 28_000.;
+        ship.speed_kmh = Nave::MAX_SPEED_KMH;
         ship.step(0., 0., true, 1., 1.);
-        let expected = 28_000. / 3.6 / Nave::METERS_PER_UNIT;
-        assert!((ship.position.z + expected).abs() < 0.01);
-        assert!((ship.velocity.length() - expected).abs() < 0.01);
+        let expected = Nave::MAX_SPEED_KMH / 3.6 / Nave::METERS_PER_UNIT;
+        assert!((ship.position.z + expected).abs() < 0.05);
+        assert!((ship.velocity.length() - expected).abs() < 0.05);
     }
     #[test]
     fn controls_and_camera_basis() {

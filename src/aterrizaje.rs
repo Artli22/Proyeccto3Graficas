@@ -5,15 +5,19 @@ use crate::planeta::SistemaPlanetario;
 use crate::vuelo::{Base, Nave};
 use raylib::prelude::Vector3;
 
-/// La asistencia empieza a esta altura sobre la superficie, en radios del planeta.
-const ALTURA_ASISTENTE: f32 = 3.0;
-/// El planeta arrastra a la nave (marco de referencia comovil) por debajo de esta altura.
+/// Se muestra el aviso de aproximacion a esta altura sobre la superficie, en radios del cuerpo.
+const ALTURA_AVISO: f32 = 3.0;
+/// El cuerpo arrastra a la nave (marco de referencia comovil) por debajo de esta altura:
+/// 2.5 radios, con un minimo en unidades para que los cuerpos pequenos tambien la tengan.
 const ALTURA_ARRASTRE: f32 = 2.5;
+const ARRASTRE_MINIMO: f32 = 300.;
 /// Velocidad maxima permitida al tocar el suelo (km/h).
 const VELOCIDAD_ATERRIZAJE: f32 = 800.;
-/// Tope de velocidad al contacto y pendiente del tope por unidad de altura (km/h).
+/// Velocidad objetivo al contacto (km/h).
 const VELOCIDAD_CONTACTO: f32 = 400.;
-const KMH_POR_UNIDAD: f32 = 72.;
+/// Frenado constante (unidades/s^2) que el asistente permite al descender: define la
+/// velocidad maxima segun la altura, v = sqrt(2 a h), y llega a VELOCIDAD_CONTACTO en el suelo.
+const ACEL_ASISTENTE: f32 = 150.;
 /// Distancia centro-nave a superficie estando posada, relativa al tamano de la nave.
 const HOLGURA: f32 = 0.2;
 /// Componente minima de avance hacia el suelo para considerar un aterrizaje.
@@ -99,10 +103,11 @@ impl GestorAterrizaje {
             Estado::EnVuelo
         };
         let holgura = size * HOLGURA;
+        let mut aviso: Option<(usize, f32, f32)> = None;
         for (i, planeta) in sistema.planetas.iter().enumerate() {
             let radio = planeta.config.radio;
             let altura = (nave.position - planeta.centro).length() - radio;
-            let t = (1. - altura / (ALTURA_ARRASTRE * radio)).clamp(0., 1.);
+            let t = (1. - altura / (ALTURA_ARRASTRE * radio).max(ARRASTRE_MINIMO)).clamp(0., 1.);
             nave.position += planeta.delta * (t * t * (3. - 2. * t));
 
             let rel = nave.position - planeta.centro;
@@ -113,19 +118,15 @@ impl GestorAterrizaje {
             let altitud = distancia - contacto;
             let descenso = -nave.forward().dot(dir);
 
-            if altitud < ALTURA_ASISTENTE * radio {
-                if self.aviso_colision <= 0. {
-                    self.estado = Estado::Aproximando {
-                        planeta: i,
-                        altitud,
-                        progreso: (1. - altitud / (ALTURA_ASISTENTE * radio)).clamp(0., 1.),
-                    };
-                }
-                if descenso > MIN_DESCENSO && nave.speed_kmh > 0. {
-                    let tope = VELOCIDAD_CONTACTO + altitud.max(0.) * KMH_POR_UNIDAD;
-                    if nave.speed_kmh > tope {
-                        nave.set_speed(tope);
-                    }
+            if altitud < ALTURA_AVISO * radio && aviso.map_or(true, |(_, a, _)| altitud < a) {
+                aviso = Some((i, altitud, (1. - altitud / (ALTURA_AVISO * radio)).clamp(0., 1.)));
+            }
+            if descenso > MIN_DESCENSO && nave.speed_kmh > VELOCIDAD_CONTACTO {
+                let metros_a_kmh = Nave::METERS_PER_UNIT * 3.6;
+                let tope = VELOCIDAD_CONTACTO
+                    + (2. * ACEL_ASISTENTE * altitud.max(0.)).sqrt() * metros_a_kmh;
+                if nave.speed_kmh > tope {
+                    nave.set_speed(tope);
                 }
             }
 
@@ -141,6 +142,15 @@ impl GestorAterrizaje {
                     }
                 }
                 return;
+            }
+        }
+        if self.aviso_colision <= 0. {
+            if let Some((planeta, altitud, progreso)) = aviso {
+                self.estado = Estado::Aproximando {
+                    planeta,
+                    altitud,
+                    progreso,
+                };
             }
         }
     }
@@ -221,48 +231,69 @@ mod tests {
     use super::*;
     use crate::planeta::SistemaPlanetario;
 
-    fn escena() -> (Nave, SistemaPlanetario) {
+    // Nave sobre el cuerpo `nombre`, a `altura` unidades de su centro y apuntando a el.
+    fn escena(nombre: &str, altura: f32) -> (Nave, SistemaPlanetario, usize) {
         let sistema = SistemaPlanetario::nuevo();
+        let i = sistema.indice(nombre).unwrap();
         let mut nave = Nave::new();
-        let p = &sistema.planetas[0];
-        nave.position = p.centro + Vector3::new(0., p.config.radio * 2., 0.);
-        nave.pitch = -1.3;
-        (nave, sistema)
+        nave.position = sistema.planetas[i].centro + Vector3::new(0., altura, 0.);
+        nave.liberar_base(Vector3::new(0., -1., 0.));
+        (nave, sistema, i)
     }
 
-    #[test]
-    fn slow_descent_lands_and_follows_planet() {
-        let (mut nave, mut sistema) = escena();
-        let mut gestor = GestorAterrizaje::nuevo();
-        for _ in 0..4000 {
+    fn descender(
+        nave: &mut Nave,
+        sistema: &mut SistemaPlanetario,
+        gestor: &mut GestorAterrizaje,
+        apuntar_a: Option<usize>,
+    ) {
+        for _ in 0..6000 {
+            if let Some(i) = apuntar_a {
+                // Cuerpo en movimiento: el piloto corrige el rumbo hacia su posicion actual.
+                sistema.actualizar(0.05);
+                let hacia = sistema.planetas[i].centro - nave.position;
+                nave.liberar_base(hacia.normalized());
+            }
             nave.step(0., 0., true, 0.6, 0.05);
-            gestor.vuelo(&mut nave, &sistema, 13., 0.05);
+            gestor.vuelo(nave, sistema, 13., 0.05);
             if gestor.posada() {
                 break;
             }
         }
+    }
+
+    #[test]
+    fn slow_descent_lands_and_follows_planet() {
+        let (mut nave, mut sistema, i) = escena("TERRA", 300.);
+        let mut gestor = GestorAterrizaje::nuevo();
+        descender(&mut nave, &mut sistema, &mut gestor, None);
         assert!(gestor.posada(), "la nave debia aterrizar");
-        let antes = nave.position - sistema.planetas[0].centro;
+        let antes = nave.position - sistema.planetas[i].centro;
         for _ in 0..200 {
             sistema.actualizar(0.05);
             gestor.superficie(&mut nave, &sistema, 0., false);
         }
-        let despues = nave.position - sistema.planetas[0].centro;
+        let despues = nave.position - sistema.planetas[i].centro;
         assert!((antes.length() - despues.length()).abs() < 1e-3);
         assert!((nave.up().dot(despues.normalized()) - 1.).abs() < 1e-3);
     }
 
     #[test]
-    fn takeoff_requires_release_after_landing() {
-        let (mut nave, sistema) = escena();
+    fn lands_on_orbiting_moon() {
+        let (mut nave, mut sistema, i) = escena("LUNA", 600.);
+        nave.set_speed(40_000.);
         let mut gestor = GestorAterrizaje::nuevo();
-        for _ in 0..4000 {
-            nave.step(0., 0., true, 0.6, 0.05);
-            gestor.vuelo(&mut nave, &sistema, 13., 0.05);
-            if gestor.posada() {
-                break;
-            }
-        }
+        descender(&mut nave, &mut sistema, &mut gestor, Some(i));
+        assert!(gestor.posada(), "la nave debia aterrizar en la luna");
+        let p = &sistema.planetas[i];
+        assert!((nave.position - p.centro).length() < p.config.radio * 1.2);
+    }
+
+    #[test]
+    fn takeoff_requires_release_after_landing() {
+        let (mut nave, mut sistema, _) = escena("TERRA", 300.);
+        let mut gestor = GestorAterrizaje::nuevo();
+        descender(&mut nave, &mut sistema, &mut gestor, None);
         gestor.superficie(&mut nave, &sistema, 0., true);
         assert!(gestor.posada());
         gestor.superficie(&mut nave, &sistema, 0., false);
@@ -272,17 +303,22 @@ mod tests {
     }
 
     #[test]
-    fn never_ends_inside_planet_at_full_speed() {
-        let (mut nave, sistema) = escena();
-        nave.position = sistema.planetas[0].centro + Vector3::new(0., 1000., 0.);
-        nave.speed_kmh = 28_000.;
-        let mut gestor = GestorAterrizaje::nuevo();
-        for _ in 0..4000 {
-            nave.step(0., 0., true, 1., 0.05);
-            gestor.vuelo(&mut nave, &sistema, 13., 0.05);
-            let p = &sistema.planetas[0];
-            let d = (nave.position - p.centro).length();
-            assert!(d >= p.config.radio, "la nave atraveso el planeta");
+    fn never_ends_inside_body_at_full_speed() {
+        for nombre in ["TERRA", "PLUTON", "MERCURIO"] {
+            let (mut nave, sistema, i) = escena(nombre, 5000.);
+            nave.set_speed(Nave::MAX_SPEED_KMH);
+            let mut gestor = GestorAterrizaje::nuevo();
+            for _ in 0..4000 {
+                nave.step(0., 0., true, 1., 0.05);
+                gestor.vuelo(&mut nave, &sistema, 13., 0.05);
+                let p = &sistema.planetas[i];
+                let dir = (nave.position - p.centro).normalized();
+                let superficie = p.radio_superficie(p.a_local(dir));
+                assert!(
+                    (nave.position - p.centro).length() >= superficie,
+                    "la nave atraveso {nombre}"
+                );
+            }
         }
     }
 }
