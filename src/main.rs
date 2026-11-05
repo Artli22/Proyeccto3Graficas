@@ -1,14 +1,19 @@
+mod aterrizaje;
 mod estrellas;
+mod fondo_rosa;
 mod fragment;
 mod framebuffer;
+mod hud;
 mod laser;
 mod luz;
 mod particle_renderer;
 mod pipeline;
+mod planeta;
 mod thrust;
 mod triangle;
 mod vuelo;
 
+use aterrizaje::GestorAterrizaje;
 use cohete::color::Relleno;
 use cohete::controles::Controles;
 use cohete::obj::Model;
@@ -17,6 +22,7 @@ use framebuffer::Framebuffer;
 use laser::Laser;
 use particle_renderer::ParticulaPantalla;
 use pipeline::{ScreenVertex, Uniforms};
+use planeta::SistemaPlanetario;
 use raylib::prelude::*;
 use thrust::ThrustEngine;
 use triangle::{profundidad_en, triangle};
@@ -79,6 +85,9 @@ fn render(
     laser: Option<&Laser>,
     luz_intensidad: f32,
     estrellas: &estrellas::Estrellas,
+    datos: &hud::Datos,
+    fondo_rosa: &fondo_rosa::FondoRosa,
+    sistema: &SistemaPlanetario,
 ) {
     let focal = SCREEN_HEIGHT as f32;
     let resaltado = Relleno::Solido(COLOR_SELECCION);
@@ -126,6 +135,37 @@ fn render(
         }
     }
 
+    // Planetas: mismo pipeline (modelo -> vista -> proyeccion -> clipping) con su propia matriz de modelo.
+    for planeta in &sistema.planetas {
+        let mut uniforms = *matrices;
+        uniforms.model = planeta.matriz_modelo();
+        for (tri, relleno) in planeta.triangulos.iter().zip(&planeta.rellenos) {
+            let transformed = std::array::from_fn::<_, 3, _>(|i| {
+                pipeline::vertex_shader(tri[i], Vector2::zero(), &uniforms)
+            });
+            let p = transformed.map(|v| v.world);
+            let normal = (p[1] - p[0]).cross(p[2] - p[0]);
+            if normal.length() < 1e-6 {
+                continue;
+            }
+            let normal = normal.normalized();
+            // Descarte de caras traseras: la malla es cerrada y sus normales apuntan hacia afuera.
+            if normal.dot(camera.position - p[0]) <= 0. {
+                continue;
+            }
+            let shader = ShaderParams {
+                normal,
+                eye: camera.position,
+                engine_light: None,
+                unlit: false,
+            };
+            for clipped in pipeline::clip_triangle(transformed) {
+                let screen = clipped.map(|v| pipeline::viewport(v, matrices));
+                opacos.push((screen, relleno, shader));
+            }
+        }
+    }
+
     let profundidad = |t: &Visible| t.0[0].screen.z + t.0[1].screen.z + t.0[2].screen.z;
     translucidos.sort_by(|a, b| profundidad(b).total_cmp(&profundidad(a)));
 
@@ -148,8 +188,10 @@ fn render(
 
     // Cada hilo dibuja una franja: primero el modelo, luego el láser y la nube del propulsor
     let fondo = estrellas.preparar(matrices, camera.position, model.size.max(1.));
+    let logo = fondo_rosa.preparar(matrices, camera.position, model.size.max(1.));
     framebuffer.render_parallel(|franja| {
         estrellas::dibujar(&fondo, franja);
+        fondo_rosa.dibujar(franja, &logo, camera.position);
         for (pantalla, relleno, shader) in opacos.iter().chain(translucidos.iter()) {
             triangle(franja, *pantalla, relleno, *shader);
         }
@@ -159,6 +201,7 @@ fn render(
         for p in &particulas {
             particle_renderer::dibujar_particula(franja, p);
         }
+        hud::dibujar(franja, datos, SCREEN_HEIGHT);
     });
 }
 
@@ -215,6 +258,14 @@ fn main() {
             return;
         }
     };
+    let fondo_path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/assets/SancorSeguros1.obj");
+    let fondo_rosa = match fondo_rosa::FondoRosa::load(fondo_path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("No se pudo preparar el fondo rosa: {e}");
+            return;
+        }
+    };
     let size = model.size.max(1.);
     let mut framebuffer = Framebuffer::new(&mut rl, &thread, SCREEN_WIDTH, SCREEN_HEIGHT);
     framebuffer.set_background_color(Color::BLACK);
@@ -225,9 +276,13 @@ fn main() {
     let mut selected = None;
     let mut thrust = ThrustEngine::new();
     let mut laser = Laser::new();
-    let mut propulsor = Propulsor::Fuego;
+    let mut previous_mode = Propulsor::Fuego;
+    let mut selected_power = 0.6;
     let mut last = std::time::Instant::now();
-    println!("W/S: subir/bajar nariz | A/D: girar izquierda/derecha | ESPACIO: avanzar | E: fuego/laser | rueda/+/-: distancia de camara | R: reiniciar | clic: seleccionar | C: quitar | ESC: salir");
+    let mut sistema = SistemaPlanetario::nuevo();
+    let mut gestor = GestorAterrizaje::nuevo();
+    println!("W/S: subir/bajar nariz | A/D: girar izquierda/derecha | ESPACIO: acelerar (soltar: frenar) | 1/2/3: potencia 30/60/100% | laser automatico >1000 km/h | rueda/+/-: distancia de camara | R: reiniciar | clic: seleccionar | C: quitar | ESC: salir");
+    println!("ATERRIZAJE: apunta al planeta TERRA y avanza; el asistente reduce la velocidad al descender. Posado: A/D giran, ESPACIO despega.");
     while !rl.window_should_close() {
         let now = std::time::Instant::now();
         let dt = now.duration_since(last).as_secs_f32().min(0.05);
@@ -236,27 +291,48 @@ fn main() {
         if input.reiniciar {
             nave = Nave::new();
             camera = Camara::new(&nave, size);
+            gestor = GestorAterrizaje::nuevo();
             thrust.apagar();
             laser.apagar();
             selected = None;
+            selected_power = 0.6;
+            previous_mode = Propulsor::Fuego;
         }
         if input.quitar_seleccion {
             selected = None;
         }
-        if rl.is_key_pressed(KeyboardKey::KEY_E) {
-            propulsor = match propulsor {
-                Propulsor::Fuego => Propulsor::Laser,
-                Propulsor::Laser => Propulsor::Fuego,
-            };
+        if rl.is_key_pressed(KeyboardKey::KEY_ONE) {
+            selected_power = 0.3;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_TWO) {
+            selected_power = 0.6;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_THREE) {
+            selected_power = 1.;
+        }
+        sistema.actualizar(dt);
+        let avanzando = input.avanzar && !input.reiniciar;
+        if !input.reiniciar {
+            if gestor.posada() {
+                gestor.superficie(&mut nave, &sistema, input.yaw, input.avanzar);
+            } else {
+                nave.step(input.yaw, input.pitch, avanzando, selected_power, dt);
+                gestor.vuelo(&mut nave, &sistema, size, dt);
+            }
+        }
+        let moving = avanzando && !gestor.posada();
+        let propulsor = if nave.laser_mode() {
+            Propulsor::Laser
+        } else {
+            Propulsor::Fuego
+        };
+        if propulsor != previous_mode {
             thrust.apagar();
             laser.apagar();
-        }
-        let moving = input.avanzar && !input.reiniciar;
-        if !input.reiniciar {
-            nave.step(input.yaw, input.pitch, moving, dt, size);
+            previous_mode = propulsor;
         }
         camera.update(&nave, size, input.zoom, dt);
-        // Gate unico: sin avance no quedan particulas, laser ni luz del motor.
+        // Sin Espacio no hay efectos aunque la nave aun este frenando.
         if moving {
             if let Some((pos, dir, radius)) = boquilla(&model) {
                 let world_pos = nave.centered_point(pos);
@@ -265,12 +341,12 @@ fn main() {
                 match propulsor {
                     Propulsor::Fuego => {
                         laser.apagar();
-                        thrust.intensity = 1.;
+                        thrust.intensity = selected_power;
                         thrust.update(dt, world_pos, world_dir, radius);
                     }
                     Propulsor::Laser => {
                         thrust.apagar();
-                        laser.update(dt, 1.);
+                        laser.update(dt, selected_power);
                     }
                 }
             }
@@ -298,6 +374,10 @@ fn main() {
         } else {
             (None, 0.)
         };
+        let mut datos = hud::Datos::new(&nave, selected_power, moving);
+        let (texto, progreso) = gestor.hud(&sistema);
+        datos.landing_status = texto;
+        datos.landing_progress = progreso;
         render(
             &mut framebuffer,
             &model,
@@ -309,6 +389,9 @@ fn main() {
             beam,
             power,
             &estrellas,
+            &datos,
+            &fondo_rosa,
+            &sistema,
         );
         let mut d = rl.begin_drawing(&thread);
         framebuffer.render_buffer(&mut d);

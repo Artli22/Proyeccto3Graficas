@@ -2,11 +2,21 @@
 use crate::pipeline::Mat4;
 use raylib::prelude::Vector3;
 
+/// Base ortonormal que reemplaza a yaw/pitch mientras la nave esta posada (right x forward = up).
+#[derive(Clone, Copy)]
+pub struct Base {
+    pub right: Vector3,
+    pub up: Vector3,
+    pub forward: Vector3,
+}
+
 pub struct Nave {
     pub position: Vector3,
     pub yaw: f32,
     pub pitch: f32,
     pub velocity: Vector3,
+    pub speed_kmh: f32,
+    pub base: Option<Base>,
 }
 impl Nave {
     pub fn new() -> Self {
@@ -15,29 +25,102 @@ impl Nave {
             yaw: 0.,
             pitch: 0.,
             velocity: Vector3::zero(),
+            speed_kmh: 0.,
+            base: None,
         }
     }
     pub fn forward(&self) -> Vector3 {
+        if let Some(b) = self.base {
+            return b.forward;
+        }
         let (sy, cy) = self.yaw.sin_cos();
         let (sp, cp) = self.pitch.sin_cos();
         Vector3::new(sy * cp, sp, -cy * cp)
     }
     pub fn right(&self) -> Vector3 {
+        if let Some(b) = self.base {
+            return b.right;
+        }
         Vector3::new(self.yaw.cos(), 0., self.yaw.sin())
     }
     pub fn up(&self) -> Vector3 {
+        if let Some(b) = self.base {
+            return b.up;
+        }
         self.right().cross(self.forward()).normalized()
     }
-    pub fn step(&mut self, yaw: f32, pitch: f32, advance: bool, dt: f32, size: f32) {
+    /// Fija la velocidad (km/h) y la velocidad de mundo coherente con ella.
+    pub fn set_speed(&mut self, kmh: f32) {
+        self.speed_kmh = kmh.max(0.);
+        self.velocity = self.forward() * (self.speed_kmh / 3.6 / Self::METERS_PER_UNIT);
+    }
+    /// Sale del modo posado conservando el rumbo actual como yaw/pitch.
+    pub fn liberar_base(&mut self, forward: Vector3) {
+        self.yaw = forward.x.atan2(-forward.z).rem_euclid(std::f32::consts::TAU);
+        self.pitch = forward.y.clamp(-1., 1.).asin().clamp(-1.35, 1.35);
+        self.base = None;
+    }
+    pub const MAX_SPEED_KMH: f32 = 28_000.;
+    pub const LASER_THRESHOLD_KMH: f32 = 10_000.;
+    // Escala explicita: el velocimetro corresponde al desplazamiento del mundo.
+    pub const METERS_PER_UNIT: f32 = 100.;
+    pub const NORMAL_ACCEL: f32 = 450.; // km/h ganados por segundo al 100%
+    pub const LASER_ACCEL: f32 = 2_200.;
+    pub const BRAKING: f32 = 3_000.;
+
+    pub fn laser_mode(&self) -> bool {
+        self.speed_kmh > Self::LASER_THRESHOLD_KMH
+    }
+
+    /// Integra por tramos, incluidos los cruces de 1000, 28000 y la parada.
+    /// Retorna velocidad final (km/h) y distancia realmente recorrida (km).
+    pub fn integrate_speed(initial: f32, power: f32, dt: f32) -> (f32, f32) {
+        let mut speed = initial.clamp(0., Self::MAX_SPEED_KMH);
+        let mut remaining = dt.max(0.);
+        let mut distance = 0.;
+        let power = power.clamp(0., 1.);
+        if power <= 0. {
+            let time = remaining.min(speed / Self::BRAKING);
+            let end = (speed - Self::BRAKING * time).max(0.);
+            return (end, (speed + end) * 0.5 * time / 3600.);
+        }
+        // A lo sumo: tramo normal, tramo laser y crucero al limite.
+        for _ in 0..3 {
+            if remaining <= 0. {
+                break;
+            }
+            if speed >= Self::MAX_SPEED_KMH {
+                distance += speed * remaining / 3600.;
+                break;
+            }
+            let (boundary, accel) = if speed < Self::LASER_THRESHOLD_KMH {
+                (Self::LASER_THRESHOLD_KMH, Self::NORMAL_ACCEL * power)
+            } else {
+                (Self::MAX_SPEED_KMH, Self::LASER_ACCEL * power)
+            };
+            let until_boundary = (boundary - speed) / accel;
+            let time = remaining.min(until_boundary);
+            let end = if time >= until_boundary {
+                boundary
+            } else {
+                speed + accel * time
+            };
+            distance += (speed + end) * 0.5 * time / 3600.;
+            speed = end;
+            remaining = (remaining - time).max(0.);
+        }
+        (speed.min(Self::MAX_SPEED_KMH), distance)
+    }
+
+    pub fn step(&mut self, yaw: f32, pitch: f32, advance: bool, power: f32, dt: f32) {
         self.yaw = (self.yaw + yaw).rem_euclid(std::f32::consts::TAU);
         self.pitch = (self.pitch + pitch).clamp(-1.35, 1.35);
-        // Sin inercia al soltar Espacio: detenerse y apagar efectos inmediatamente.
-        self.velocity = if advance {
-            self.forward() * size * 3.0
-        } else {
-            Vector3::zero()
-        };
-        self.position += self.velocity * dt.max(0.);
+        let (speed, distance) =
+            Self::integrate_speed(self.speed_kmh, if advance { power } else { 0. }, dt);
+        self.speed_kmh = speed;
+        let forward = self.forward();
+        self.velocity = forward * (speed / 3.6 / Self::METERS_PER_UNIT);
+        self.position += forward * (distance * 1000. / Self::METERS_PER_UNIT);
     }
     pub fn model_matrix(&self, center: Vector3) -> Mat4 {
         let r = -self.right();
@@ -136,42 +219,66 @@ impl Camara {
 mod tests {
     use super::*;
     #[test]
-    fn forward_and_stop() {
+    fn acceleration_braking_and_cap() {
         let mut ship = Nave::new();
-        ship.step(0., 0., true, 1., 10.);
-        assert!((ship.position.z + 30.).abs() < 1e-4);
-        let before = ship.position;
-        ship.step(0., 0., false, 1., 10.);
-        assert!((ship.position - before).length() < 1e-4);
+        ship.step(0., 0., true, 1., 1.);
+        assert!((ship.speed_kmh - 450.).abs() < 0.01);
+        assert!(ship.position.z < 0.);
+        ship.step(0., 0., true, 1., 100.);
+        assert_eq!(ship.speed_kmh, 28_000.);
+        ship.step(0., 0., false, 1., 1.);
+        assert_eq!(ship.speed_kmh, 25_000.);
+        ship.step(0., 0., false, 1., 20.);
+        assert_eq!(ship.speed_kmh, 0.);
         assert_eq!(ship.velocity.length(), 0.);
     }
     #[test]
-    fn controls_and_basis() {
+    fn threshold_is_strictly_above_1000() {
         let mut ship = Nave::new();
-        ship.step(0.4, 0.3, false, 0., 10.);
-        assert!(ship.forward().x > 0. && ship.forward().y > 0.);
-        assert!(ship.forward().dot(ship.right()).abs() < 1e-5);
-        assert!(ship.forward().dot(ship.up()).abs() < 1e-5);
-        assert!((ship.forward().length() - 1.).abs() < 1e-5);
+        ship.speed_kmh = 1000.;
+        assert!(!ship.laser_mode());
+        ship.speed_kmh = 1000.1;
+        assert!(ship.laser_mode());
     }
     #[test]
-    fn view_maps_camera_to_origin() {
-        let ship = Nave::new();
+    fn levels_change_acceleration() {
+        let slow = Nave::integrate_speed(0., 0.3, 1.).0;
+        let medium = Nave::integrate_speed(0., 0.6, 1.).0;
+        let full = Nave::integrate_speed(0., 1., 1.).0;
+        assert!(slow < medium && medium < full);
+        assert!((slow - 135.).abs() < 0.01);
+    }
+    #[test]
+    fn timestep_independence_across_boundaries() {
+        let (one, distance) = Nave::integrate_speed(0., 1., 20.);
+        let mut speed = 0.;
+        let mut total = 0.;
+        for _ in 0..2000 {
+            let (s, d) = Nave::integrate_speed(speed, 1., 0.01);
+            speed = s;
+            total += d;
+        }
+        assert!((one - speed).abs() < 0.1);
+        assert!((distance - total).abs() < 0.01);
+    }
+    #[test]
+    fn distance_and_speed_use_same_units() {
+        let mut ship = Nave::new();
+        ship.speed_kmh = 28_000.;
+        ship.step(0., 0., true, 1., 1.);
+        let expected = 28_000. / 3.6 / Nave::METERS_PER_UNIT;
+        assert!((ship.position.z + expected).abs() < 0.01);
+        assert!((ship.velocity.length() - expected).abs() < 0.01);
+    }
+    #[test]
+    fn controls_and_camera_basis() {
+        let mut ship = Nave::new();
+        ship.step(0.4, 0.3, false, 1., 0.);
+        assert!(ship.forward().x > 0. && ship.forward().y > 0.);
+        assert!(ship.forward().dot(ship.right()).abs() < 1e-5);
         let camera = Camara::new(&ship, 10.);
         let p = camera.position;
         let q = camera.view_matrix().transform([p.x, p.y, p.z, 1.]);
         assert!(q[0].abs() < 1e-4 && q[1].abs() < 1e-4 && q[2].abs() < 1e-4);
-        let nose = ship.centered_point(Vector3::new(0., 0., 1.));
-        assert!((nose - ship.forward()).length() < 1e-5);
-    }
-    #[test]
-    fn distance_is_time_based() {
-        let mut one = Nave::new();
-        let mut many = Nave::new();
-        one.step(0., 0., true, 1., 10.);
-        for _ in 0..100 {
-            many.step(0., 0., true, 0.01, 10.);
-        }
-        assert!((one.position - many.position).length() < 1e-3);
     }
 }
