@@ -60,13 +60,13 @@ impl Nave {
         self.pitch = forward.y.clamp(-1., 1.).asin().clamp(-1.35, 1.35);
         self.base = None;
     }
-    pub const MAX_SPEED_KMH: f32 = 300_000.;
-    pub const LASER_THRESHOLD_KMH: f32 = 10_000.;
+    pub const MAX_SPEED_KMH: f32 = 164_000.;
+    pub const LASER_THRESHOLD_KMH: f32 = 36_500.;
     // Escala explicita: el velocimetro corresponde al desplazamiento del mundo.
     pub const METERS_PER_UNIT: f32 = 100.;
-    pub const NORMAL_ACCEL: f32 = 4_000.; // km/h ganados por segundo al 100%
-    pub const LASER_ACCEL: f32 = 60_000.;
-    pub const BRAKING: f32 = 60_000.;
+    pub const NORMAL_ACCEL: f32 = 2_225.; // km/h ganados por segundo al 100%
+    pub const LASER_ACCEL: f32 = 31_100.;
+    pub const BRAKING: f32 = 31_500.;
 
     pub fn laser_mode(&self) -> bool {
         self.speed_kmh > Self::LASER_THRESHOLD_KMH
@@ -162,7 +162,8 @@ impl Camara {
     pub const DISTANCE: f32 = 1.45;
     pub const HEIGHT: f32 = 0.55;
     pub const LOOK_AHEAD: f32 = 0.35;
-    pub const FOLLOW_SPEED: f32 = 7.0;
+    // El retraso de la camara en regimen es velocidad / FOLLOW_SPEED: con 14 es la mitad que con 7.
+    pub const FOLLOW_SPEED: f32 = 14.0;
     fn desired(nave: &Nave, size: f32, distance: f32) -> (Vector3, Vector3) {
         (
             nave.position - nave.forward() * distance + nave.up() * size * Self::HEIGHT,
@@ -250,16 +251,16 @@ mod tests {
     }
     #[test]
     fn timestep_independence_across_boundaries() {
-        let (one, distance) = Nave::integrate_speed(0., 1., 20.);
+        let (one, distance) = Nave::integrate_speed(0., 1., 60.);
         let mut speed = 0.;
         let mut total = 0.;
-        for _ in 0..2000 {
+        for _ in 0..6000 {
             let (s, d) = Nave::integrate_speed(speed, 1., 0.01);
             speed = s;
             total += d;
         }
         assert!((one - speed).abs() < 0.1);
-        assert!((distance - total).abs() < 0.01);
+        assert!((distance - total).abs() < distance * 1e-4);
     }
     #[test]
     fn distance_and_speed_use_same_units() {

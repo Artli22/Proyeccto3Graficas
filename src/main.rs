@@ -9,6 +9,7 @@ mod luz;
 mod particle_renderer;
 mod pipeline;
 mod planeta;
+mod sonido;
 mod thrust;
 mod triangle;
 mod vuelo;
@@ -261,6 +262,17 @@ fn triangulo_en(model: &Model, matrices: &Uniforms, x: f32, y: f32) -> Option<us
     mejor.map(|(indice, _)| indice)
 }
 
+/// Nave cerca de TERRA, a unos dos radios sobre su superficie y mirando hacia ella.
+fn nave_en_tierra(sistema: &SistemaPlanetario) -> Nave {
+    let mut nave = Nave::new();
+    if let Some(tierra) = sistema.planetas.iter().find(|p| p.config.nombre == "TERRA") {
+        let radio = tierra.config.radio;
+        nave.position = tierra.centro + Vector3::new(0., radio * 0.6, radio * 3.);
+        nave.liberar_base((tierra.centro - nave.position).normalized());
+    }
+    nave
+}
+
 fn main() {
     let (mut rl, thread) = init();
     let obj_path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/assets/Intento1Lab3.obj");
@@ -287,7 +299,8 @@ fn main() {
     let mut framebuffer = Framebuffer::new(&mut rl, &thread, SCREEN_WIDTH, SCREEN_HEIGHT);
     framebuffer.set_background_color(Color::BLACK);
     let estrellas = estrellas::Estrellas::new();
-    let mut nave = Nave::new();
+    let mut sistema = SistemaPlanetario::nuevo();
+    let mut nave = nave_en_tierra(&sistema);
     let mut camera = Camara::new(&nave, size);
     let mut controles = Controles::new();
     let mut selected = None;
@@ -296,10 +309,18 @@ fn main() {
     let mut previous_mode = Propulsor::Fuego;
     let mut selected_power = 0.6;
     let mut last = std::time::Instant::now();
-    let mut sistema = SistemaPlanetario::nuevo();
     let mut gestor = GestorAterrizaje::nuevo();
-    println!("W/S: subir/bajar nariz | A/D: girar izquierda/derecha | ESPACIO: acelerar (soltar: frenar) | 1/2/3: potencia 30/60/100% | laser automatico >1000 km/h | rueda/+/-: distancia de camara | R: reiniciar | clic: seleccionar | C: quitar | ESC: salir");
-    println!("SISTEMA: Mercurio, Venus, Terra (+Luna), Marte, Jupiter, Saturno, Urano, Neptuno y Pluton. TERRA esta al frente al iniciar.");
+    // El dispositivo de audio debe declararse antes que el sonido que lo usa.
+    let audio = match RaylibAudio::init_audio_device() {
+        Ok(audio) => Some(audio),
+        Err(e) => {
+            eprintln!("Sin audio: {e}");
+            None
+        }
+    };
+    let mut sonido = audio.as_ref().and_then(sonido::SonidoNave::cargar);
+    println!("W/S: subir/bajar nariz | A/D: girar izquierda/derecha | ESPACIO: acelerar (soltar: frenar) | 1/2/3: potencia 30/60/100% | laser automatico >36500 km/h | rueda/+/-: distancia de camara | R: reiniciar | clic: seleccionar | C: quitar | ESC: salir");
+    println!("SISTEMA: Mercurio, Venus, Terra (+Luna), Marte, Jupiter, Saturno, Urano, Neptuno y Pluton. La nave aparece cerca de TERRA.");
     println!("ATERRIZAJE: apunta a un cuerpo y avanza; el asistente reduce la velocidad al descender. Posado: A/D giran, ESPACIO despega.");
     while !rl.window_should_close() {
         let now = std::time::Instant::now();
@@ -307,7 +328,7 @@ fn main() {
         last = now;
         let input = controles.leer(&rl);
         if input.reiniciar {
-            nave = Nave::new();
+            nave = nave_en_tierra(&sistema);
             camera = Camara::new(&nave, size);
             gestor = GestorAterrizaje::nuevo();
             thrust.apagar();
@@ -348,6 +369,15 @@ fn main() {
             thrust.apagar();
             laser.apagar();
             previous_mode = propulsor;
+        }
+        if let Some(sonido) = sonido.as_mut() {
+            sonido.actualizar(
+                dt,
+                moving,
+                propulsor == Propulsor::Laser,
+                selected_power,
+                nave.speed_kmh,
+            );
         }
         camera.update(&nave, size, input.zoom, dt);
         // Sin Espacio no hay efectos aunque la nave aun este frenando.

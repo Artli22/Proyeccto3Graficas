@@ -1,22 +1,17 @@
-//! Cuerpos celestes procedurales: icosfera subdividida, relieve por ruido fractal y color por aspecto.
-//! La malla se genera en CPU y se dibuja con el mismo pipeline que la nave.
+
 use crate::pipeline::{Mat4, Uniforms, FAR, NEAR};
 use cohete::color::Relleno;
 use raylib::prelude::{Color, Vector3};
 use std::collections::HashMap;
 
-/// Como se colorea (y si tiene relieve) la superficie de un cuerpo.
 #[derive(Clone, Copy)]
 pub enum Aspecto {
-    /// Mares planos y continentes con biomas.
     Tierra,
-    /// Roca con relieve; `casquetes` anade hielo en los polos.
     Rocoso {
         oscuro: [f32; 3],
         claro: [f32; 3],
         casquetes: bool,
     },
-    /// Gigante gaseoso: bandas por latitud deformadas con ruido, sin relieve.
     Bandas {
         a: [f32; 3],
         b: [f32; 3],
@@ -30,17 +25,15 @@ pub struct PlanetaConfig {
     pub nombre: &'static str,
     pub radio: f32,
     pub semilla: u32,
-    /// Indice del cuerpo alrededor del cual orbita; `None` orbita el origen.
     pub padre: Option<usize>,
     pub orbita_radio: f32,
     pub orbita_inicial: f32,
-    pub orbita_velocidad: f32,   // rad/s
-    pub rotacion_velocidad: f32, // rad/s
-    pub inclinacion: f32,        // inclinacion del eje, rad
+    pub orbita_velocidad: f32,   
+    pub rotacion_velocidad: f32, 
+    pub inclinacion: f32,        
     pub subdivisiones: u32,
-    pub relieve: f32, // altura maxima del relieve como fraccion del radio
+    pub relieve: f32, 
     pub aspecto: Aspecto,
-    /// Radio interior y exterior del anillo, como multiplos del radio.
     pub anillo: Option<(f32, f32)>,
 }
 
@@ -57,7 +50,6 @@ fn hash(x: i32, y: i32, z: i32, semilla: u32) -> f32 {
     h as f32 / u32::MAX as f32
 }
 
-// Ruido de valor con interpolacion trilineal suavizada.
 fn ruido(p: Vector3, semilla: u32) -> f32 {
     let (ix, iy, iz) = (p.x.floor(), p.y.floor(), p.z.floor());
     let suave = |t: f32| t * t * (3. - 2. * t);
@@ -72,7 +64,6 @@ fn ruido(p: Vector3, semilla: u32) -> f32 {
     lerp(lerp(x00, x10, fy), lerp(x01, x11, fy), fz)
 }
 
-// Ruido fractal normalizado a [0, 1].
 fn fbm(dir: Vector3, semilla: u32) -> f32 {
     let (mut total, mut amplitud, mut frecuencia, mut suma) = (0., 1., 1.8, 0.);
     for octava in 0..5 {
@@ -198,7 +189,6 @@ fn icosaedro() -> (Vec<Vector3>, Vec<[usize; 3]>) {
     (vertices, caras)
 }
 
-// Cada pasada parte cada triangulo en cuatro y proyecta los puntos medios a la esfera.
 fn subdividir(vertices: &mut Vec<Vector3>, caras: &[[usize; 3]]) -> Vec<[usize; 3]> {
     let mut medios: HashMap<(usize, usize), usize> = HashMap::new();
     let mut medio = |a: usize, b: usize, vertices: &mut Vec<Vector3>| {
@@ -218,8 +208,6 @@ fn subdividir(vertices: &mut Vec<Vector3>, caras: &[[usize; 3]]) -> Vec<[usize; 
     nuevas
 }
 
-/// Una malla en espacio local. `normales` (unitarias, hacia afuera) solo se llena en las
-/// mallas cerradas; el anillo es de doble cara y no las usa.
 pub struct Malla {
     pub triangulos: Vec<[Vector3; 3]>,
     pub normales: Vec<Vector3>,
@@ -279,7 +267,7 @@ fn construir_anillo(config: &PlanetaConfig, interior: f32, exterior: f32) -> Mal
     };
     for banda in 0..BANDAS {
         if banda == 5 {
-            continue; // hueco entre anillos
+            continue; 
         }
         let r0 = config.radio * (interior + (exterior - interior) * banda as f32 / BANDAS as f32);
         let r1 =
@@ -321,15 +309,12 @@ fn rot_x(v: Vector3, a: f32) -> Vector3 {
 
 pub struct Planeta {
     pub config: PlanetaConfig,
-    /// De mayor a menor detalle.
     pub mallas: Vec<Malla>,
     pub anillo: Option<Malla>,
     pub centro: Vector3,
-    /// Desplazamiento del centro durante el ultimo `actualizar`.
     pub delta: Vector3,
     pub angulo_rotacion: f32,
     angulo_orbita: f32,
-    /// Radio de la esfera que contiene todo el cuerpo, anillo incluido.
     radio_limite: f32,
 }
 
@@ -536,7 +521,7 @@ impl SistemaPlanetario {
                 semilla: 57,
                 padre: Some(2),
                 orbita_radio: 1100.,
-                orbita_inicial: 0.,
+                orbita_inicial: -FRAC_PI_2 + 0.5, // visible desde el punto de aparicion de la nave
                 orbita_velocidad: 0.04,
                 rotacion_velocidad: 0.04, // rotacion sincrona: siempre muestra la misma cara
                 relieve: 0.08,

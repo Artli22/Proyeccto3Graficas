@@ -213,7 +213,7 @@ mod tests {
         let mut ship = Nave::new();
         ship.speed_kmh = Nave::MAX_SPEED_KMH;
         let active = Datos::new(&ship, 0.6, true);
-        assert_eq!(active.speed, "300,000");
+        assert_eq!(active.speed, "164,000");
         assert_eq!(active.motor, "MOTOR LASER");
         let off = Datos::new(&ship, 0.6, false);
         assert_eq!(off.motor, "MOTOR APAGADO");
