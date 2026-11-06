@@ -167,9 +167,6 @@ pub fn clip_triangle(triangle: [VertexOut; 3]) -> Vec<[VertexOut; 3]> {
     salida
 }
 
-/// Igual que `clip_triangle` pero agrega a `salida`. Los triangulos totalmente dentro o
-/// totalmente fuera de un plano se resuelven con mascaras de bits, sin asignar memoria: son
-/// casi todos los de una malla grande.
 pub fn clip_triangle_into(triangle: [VertexOut; 3], salida: &mut Vec<[VertexOut; 3]>) {
     if triangle
         .iter()

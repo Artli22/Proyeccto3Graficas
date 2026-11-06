@@ -13,9 +13,7 @@ const ACEL_ASISTENTE: f32 = 150.;
 pub const HOLGURA: f32 = 0.2;
 const MIN_DESCENSO: f32 = 0.05;
 const AMORTIGUACION_DERIVA: f32 = 0.5;
-/// Inclinacion maxima de la nariz respecto al horizonte local en el modo local (rad).
 const INCLINACION_LOCAL: f32 = 1.2;
-/// Salir del modo local al superar el alcance por este factor (histeresis).
 const HISTERESIS_LOCAL: f32 = 1.5;
 
 /// Distancia sobre la superficie dentro de la cual puede activarse el modo local.
@@ -28,7 +26,7 @@ fn alcance_local(radio: f32) -> f32 {
 #[derive(Clone, Copy)]
 struct Orbita {
     planeta: usize,
-    rumbo: Vector3, // tangente al horizonte local, en mundo
+    rumbo: Vector3, 
     inclinacion: f32,
 }
 
@@ -71,6 +69,14 @@ impl GestorAterrizaje {
         self.anclaje.is_some()
     }
 
+    /// Muestra el aviso de colision durante un segundo (choque contra un resto, por ejemplo).
+    pub fn avisar_colision(&mut self) {
+        self.aviso_colision = 1.;
+        if self.anclaje.is_none() {
+            self.estado = Estado::Colision;
+        }
+    }
+
     pub fn titulo(&self) -> &'static str {
         match self.estado {
             Estado::EnVuelo | Estado::Aproximando if self.orbita.is_some() => "MODO LOCAL",
@@ -81,8 +87,7 @@ impl GestorAterrizaje {
         }
     }
 
-    /// Activa o desactiva el modo local. Solo se activa a menos de `alcance_local` de un cuerpo
-    /// (el mas cercano) y nunca estando posada.
+    /// Activa o desactiva el modo local. Solo se activa a menos de `alcance_local` de un cuerpo y nunca estando posada.
     pub fn alternar_modo_local(&mut self, nave: &mut Nave, sistema: &SistemaPlanetario) {
         if self.anclaje.is_some() {
             return;
@@ -131,9 +136,6 @@ impl GestorAterrizaje {
         });
     }
 
-    /// Sustituye a `Nave::step` mientras el modo local esta activo. Devuelve `false` si no lo
-    /// esta (o si acaba de salir por alejarse), y entonces hay que usar `Nave::step`.
-    /// La gravedad se sigue aplicando en `vuelo`: el modo no la compensa.
     pub fn vuelo_local(
         &mut self,
         nave: &mut Nave,
@@ -160,7 +162,6 @@ impl GestorAterrizaje {
             let derecha = nave.right();
             rumbo = derecha - arriba * derecha.dot(arriba);
         }
-        // Un giro a la derecha es horario visto desde la normal, es decir angulo negativo.
         let (s, c) = (-yaw).sin_cos();
         let rumbo = rumbo.normalized();
         o.rumbo = (rumbo * c + arriba.cross(rumbo) * s).normalized();
@@ -418,7 +419,6 @@ mod tests {
         assert_eq!(gestor.titulo(), "MODO LOCAL");
         let p = &sistema.planetas[i];
         let inicio = (nave.position - p.centro).normalized();
-        // Igualar la nariz al horizonte (la escena arranca apuntando al planeta).
         assert!(gestor.vuelo_local(&mut nave, &sistema, 0., INCLINACION_LOCAL, false, 0., 0.05));
         for _ in 0..200 {
             assert!(gestor.vuelo_local(&mut nave, &sistema, 0., 0., true, 0.6, 0.05));

@@ -2,7 +2,7 @@ use raylib::prelude::*;
 
 const GAMEPAD: i32 = 0;
 const ZONA_MUERTA: f32 = 0.15;
-const VELOCIDAD_ROTACION: f32 = 0.02; // 1.2 rad/s a la referencia de 60 FPS
+const VELOCIDAD_ROTACION: f32 = 0.02; 
 const SENSIBILIDAD_MOUSE: f32 = 0.005;
 const UMBRAL_CLIC: f32 = 4.0;
 

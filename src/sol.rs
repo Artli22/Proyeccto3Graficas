@@ -1,5 +1,4 @@
-//! El sol: esfera en el origen del sistema que emite luz propia y ademas ilumina al resto.
-//! Su fragment shader es propio y animado: plasma de ruido fractal que deriva con el tiempo.
+
 use crate::pipeline::{Mat4, Uniforms};
 use crate::planeta::{fbm_n, malla_esfera, mezcla, proyeccion_esfera, Malla};
 use raylib::prelude::{Color, Vector3};

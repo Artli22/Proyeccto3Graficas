@@ -6,16 +6,6 @@ ventana, la lectura de entradas, el audio, la decodificación del PNG del mapa y
 framebuffer; no se usa ninguna de sus funciones de dibujo 3D, cámara, modelos, materiales, shaders
 de GPU ni física.
 
-## Integrantes y contribuciones
-
-> COMPLETAR antes de entregar. Cada integrante debe poder explicar su contribución técnica.
-
-| Integrante | Contribución técnica |
-|---|---|
-| [Nombre] | [por ejemplo: pipeline, nave, controles] |
-| [Nombre] | [por ejemplo: planetas procedurales, sol, iluminación] |
-| [Nombre] | [por ejemplo: HUD, sonido] |
-
 ## Cómo ejecutarlo
 
 Requisitos: Rust (edición 2021) con `cargo`. La primera compilación construye raylib desde código

@@ -34,7 +34,6 @@ impl ThrustEngine {
     }
 
     fn rand(&mut self) -> f32 {
-        // xorshift32
         let mut x = self.rng_state;
         x ^= x << 13;
         x ^= x >> 17;
@@ -43,7 +42,6 @@ impl ThrustEngine {
         (x >> 8) as f32 / (1u32 << 24) as f32
     }
 
-    // `nozzle_pos` está en el espacio del modelo (centrado); `nozzle_dir` es la salida del gas.
     pub fn update(
         &mut self,
         delta_time: f32,
@@ -79,8 +77,6 @@ impl ThrustEngine {
             let angulo = self.rand() * std::f32::consts::TAU;
             let r = self.rand().sqrt() * nozzle_radius;
             let lateral = u * angulo.cos() + v * angulo.sin();
-
-            // Nace justo fuera de la cara del motor para no solaparse con el modelo.
             let position = nozzle_pos + eje * 0.15 + lateral * r;
             let velocidad = (9.0 + self.rand() * 10.0) * (0.4 + 0.6 * self.intensity);
             let velocity = eje * velocidad + lateral * (self.rand() * 1.5);
@@ -126,7 +122,7 @@ impl ThrustEngine {
                 200 - (100.0 * t) as u8,
                 100 - (80.0 * t) as u8,
                 80 - (60.0 * t) as u8,
-            ) // Humo gris
+            ) 
         };
 
         let alpha = if progress < 0.5 {

@@ -20,8 +20,6 @@ pub enum Aspecto {
         frecuencia: f32,
         turbulencia: f32,
     },
-    /// Cuerpo cargado desde `src/assets/<archivo>`; `nucleo` es el objeto del OBJ cuya esfera
-    /// se escala al radio del cuerpo y `color` representa al cuerpo en el HUD.
     Modelo {
         archivo: &'static str,
         nucleo: &'static str,
@@ -44,14 +42,10 @@ pub struct PlanetaConfig {
     pub relieve: f32, 
     pub aspecto: Aspecto,
     pub anillo: Option<(f32, f32)>,
-    /// Aceleracion gravitatoria en la superficie (unidades/s^2). `None` la deriva del radio
-    /// (`GRAVEDAD_POR_RADIO * radio`), de modo que los cuerpos grandes atraen mas.
     pub gravedad: Option<f32>,
 }
 
-/// Gravedad superficial por unidad de radio cuando el planeta no define `gravedad`.
 pub const GRAVEDAD_POR_RADIO: f32 = 0.01;
-/// Alcance de la gravedad sobre la superficie, en radios del cuerpo.
 pub const GRAVEDAD_ALCANCE: f32 = 4.;
 
 const NIVEL_MAR: f32 = 0.5;
@@ -250,7 +244,6 @@ pub struct Malla {
     pub rellenos: Vec<Relleno>,
 }
 
-/// Esfera lisa de un solo color, con las normales hacia afuera (la usa el sol).
 pub(crate) fn malla_esfera(radio: f32, subdivisiones: u32, color: Color) -> Malla {
     let (mut vertices, mut caras) = icosaedro();
     for _ in 0..subdivisiones {
@@ -666,11 +659,11 @@ impl SistemaPlanetario {
                 ..base
             },
             PlanetaConfig {
-                nombre: "TERRA",
+                nombre: "TIERRA",
                 radio: RADIO_TIERRA,
                 semilla: 42,
                 orbita_radio: 2300.,
-                orbita_inicial: -FRAC_PI_2, // frente a la nave al iniciar
+                orbita_inicial: -FRAC_PI_2, 
                 orbita_velocidad: 0.0042,
                 rotacion_velocidad: 0.05,
                 inclinacion: 0.41,

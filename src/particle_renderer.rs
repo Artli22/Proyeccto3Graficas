@@ -10,8 +10,6 @@ pub struct ParticulaPantalla {
     color: Color,
 }
 
-// `rotada` ya está en el espacio de cámara; usa la misma proyección y profundidad que el modelo
-// para que el z-buffer oculte correctamente las partículas detrás del cohete.
 pub fn proyectar_particula(
     rotada: Vector3,
     radio_mundo: f32,
@@ -68,7 +66,6 @@ pub fn dibujar_particula(band: &mut Band, p: &ParticulaPantalla) {
     }
 }
 
-// falloff[i] = (1 - t)^0.75 con t = i / 255, equivalente a sqrt(1 - t)^1.5
 fn tabla_falloff() -> &'static [u8; 256] {
     static TABLA: OnceLock<[u8; 256]> = OnceLock::new();
     TABLA.get_or_init(|| {

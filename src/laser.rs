@@ -12,8 +12,7 @@ pub struct Laser {
     tiempo: f32,
 }
 
-// Haz ya proyectado a pantalla. 1/profundidad varía linealmente en pantalla, lo que da
-// profundidad y grosor con perspectiva correcta a lo largo del haz.
+// Haz ya proyectado a pantalla. 1/profundidad varía linealmente en pantalla, lo que da profundidad y grosor con perspectiva correcta a lo largo del haz.
 struct HazPantalla {
     x0: f32,
     y0: f32,

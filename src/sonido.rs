@@ -14,8 +14,7 @@ enum AccionFrenado {
     Cancelar,
 }
 
-// El frenado se dispara una sola vez tras RETRASO_FRENADO segundos sin avanzar y solo si la nave
-// aun se mueve; si se vuelve a avanzar se cancela.
+
 #[derive(Default)]
 struct TemporizadorFrenado {
     sin_avanzar: f32,
@@ -104,8 +103,6 @@ pub struct SonidoNave<'a> {
 
 impl<'a> SonidoNave<'a> {
     pub fn cargar(audio: &'a RaylibAudio) -> Option<Self> {
-        // Un buffer mayor tolera cuadros lentos sin que el stream se quede sin datos (crujidos).
-        // Debe fijarse antes de crear los streams.
         audio.set_audio_stream_buffer_size_default(BUFFER_STREAM);
         let carpeta = concat!(env!("CARGO_MANIFEST_DIR"), "/src/assets/soundeffects/");
         let ruta_frenado = format!("{carpeta}bajandoVelocidad.mp3");

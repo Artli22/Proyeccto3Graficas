@@ -1,10 +1,8 @@
-//! Resplandor del sol: halo y corona en pantalla alrededor del disco, dibujados antes que la
-//! geometria para que planetas y nave que pasan por delante lo tapen.
+
 use crate::framebuffer::Band;
 use crate::pipeline::{Uniforms, NEAR};
 use raylib::prelude::{Color, Vector3};
 
-/// Alcance del resplandor en multiplos del radio aparente (con un minimo para el sol lejano).
 const ALCANCE: f32 = 4.;
 const RADIO_MINIMO_PX: f32 = 6.;
 
@@ -16,7 +14,6 @@ pub struct Resplandor {
 }
 
 impl Resplandor {
-    /// `None` si el sol esta detras de la camara o la camara esta dentro de el.
     pub fn preparar(u: &Uniforms, centro: Vector3, radio: f32) -> Option<Self> {
         let c = u.camera_point(centro);
         if c.z <= NEAR.max(radio) {
@@ -35,8 +32,7 @@ impl Resplandor {
         }
         Some(Self { x, y, disco, escala })
     }
-
-    /// Opacidad (0..1) a `d` escalas fuera del borde del disco: nucleo brillante + corona ancha.
+    
     fn opacidad(d: f32) -> f32 {
         let nucleo = 0.30 / (1. + 12. * d * d);
         let corona = 0.12 / (1. + 2. * d * d);
@@ -44,7 +40,6 @@ impl Resplandor {
         (nucleo + corona) * borde
     }
 
-    /// Del blanco amarillento junto al disco al naranja rojizo de la corona externa.
     fn color(d: f32) -> [f32; 3] {
         let t = (d / 2.).clamp(0., 1.);
         [235., 190. - 100. * t, 110. - 80. * t]

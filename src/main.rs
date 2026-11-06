@@ -11,6 +11,7 @@ mod particle_renderer;
 mod pipeline;
 mod planeta;
 mod resplandor;
+mod restos;
 mod sol;
 mod sonido;
 mod thrust;
@@ -136,6 +137,7 @@ fn render(
     datos: &hud::Datos,
     fondo_rosa: &fondo_rosa::FondoRosa,
     sistema: &SistemaPlanetario,
+    restos: &restos::Restos,
 ) {
     let focal = SCREEN_HEIGHT as f32;
     let resaltado = Relleno::Solido(COLOR_SELECCION);
@@ -218,6 +220,20 @@ fn render(
         if let Some(anillo) = &planeta.anillo {
             agregar_malla(anillo, &uniforms, base, None, &mut opacos);
         }
+    }
+    // Restos de naves: se descartan fuera de la vista y el detalle baja con la distancia.
+    for resto in &restos.restos {
+        let Some(radio_px) =
+            planeta::proyeccion_esfera(matrices, resto.centro, resto.radio_limite, resto.radio_colision)
+        else {
+            continue;
+        };
+        let Some(malla) = resto.malla_lod(radio_px) else {
+            continue;
+        };
+        let mut uniforms = *matrices;
+        uniforms.model = resto.matriz_modelo();
+        agregar_malla(malla, &uniforms, base, None, &mut opacos);
     }
     let profundidad = |t: &Visible| t.0[0].screen.z + t.0[1].screen.z + t.0[2].screen.z;
     translucidos.sort_by(|a, b| profundidad(b).total_cmp(&profundidad(a)));
@@ -372,6 +388,13 @@ fn main() {
     let mut selected_power = 0.6;
     let mut last = std::time::Instant::now();
     let mut gestor = GestorAterrizaje::nuevo();
+    let mut restos = {
+        let ruta = concat!(env!("CARGO_MANIFEST_DIR"), "/src/assets/Nave_destruida.obj");
+        restos::Restos::nuevo(ruta, size).unwrap_or_else(|e| {
+            eprintln!("Sin restos de naves: {e}");
+            restos::Restos::vacio()
+        })
+    };
     let mut tiempo = 0f32;
     let mut recorrido_km = 0f64;
     // El dispositivo de audio debe declararse antes que el sonido que lo usa.
@@ -399,6 +422,7 @@ fn main() {
             nave = nave_en_tierra(&sistema);
             camera = Camara::new(&nave, size);
             gestor = GestorAterrizaje::nuevo();
+            restos.olvidar();
             tiempo = 0.;
             thrust.apagar();
             laser.apagar();
@@ -419,6 +443,7 @@ fn main() {
             selected_power = 1.;
         }
         sistema.actualizar(dt);
+        restos.actualizar(dt, &sistema);
         if input.modo_local && !input.reiniciar {
             gestor.alternar_modo_local(&mut nave, &sistema);
         }
@@ -440,6 +465,9 @@ fn main() {
                     nave.step(input.yaw, input.pitch, avanzando, selected_power, dt);
                 }
                 gestor.vuelo(&mut nave, &sistema, size, dt);
+            }
+            if restos.colisionar_nave(&mut nave, size * 0.5, gestor.posada()) {
+                gestor.avisar_colision();
             }
         }
         let moving = avanzando && !gestor.posada();
@@ -528,6 +556,7 @@ fn main() {
             &datos,
             &fondo_rosa,
             &sistema,
+            &restos,
         );
         let mut d = rl.begin_drawing(&thread);
         framebuffer.render_buffer(&mut d);

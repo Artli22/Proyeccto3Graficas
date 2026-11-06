@@ -1,6 +1,4 @@
-//! HUD estilo automovil (velocimetro, lista de cercanos, mapa estelar) con instrumentos de
-//! aviacion (horizonte artificial y radar de altitud). Se dibuja pixel a pixel en CPU, sin
-//! fuentes ni dibujo de raylib.
+
 use crate::framebuffer::Band;
 use crate::planeta::SistemaPlanetario;
 use crate::vuelo::Nave;
@@ -43,16 +41,13 @@ pub struct Datos {
     altitud: f32,
     unidad: &'static str,
     cuerpo: &'static str,
-    // sin(cabeceo), componente derecha y componente arriba de la vertical del cuerpo mas cercano
     actitud: (f32, f32, f32),
     nave_mapa: Option<NaveMapa>,
     cuerpos_mapa: Vec<MarcaMapa>,
     orbitas_mapa: Vec<f32>,
 }
 
-/// Mapa estelar: vista cenital con el sol al centro. Las coordenadas van en el disco unitario
-/// y la distancia al sol se comprime con raiz cuadrada para que los planetas internos no se
-/// amontonen en el centro.
+
 const LADO_MAPA: i32 = 220;
 const RADIO_MAPA: f32 = 104.;
 const ESTRELLAS_MAPA: u32 = 70;
@@ -68,7 +63,6 @@ struct MarcaMapa {
 struct NaveMapa {
     x: f32,
     y: f32,
-    // Rumbo horizontal ya convertido al espacio del mapa; `None` si la nariz apunta casi vertical.
     dir: Option<(f32, f32)>,
 }
 
@@ -81,9 +75,7 @@ fn proyectar_mapa(p: (f32, f32), alcance: f32) -> (f32, f32) {
     (p.0 / d * r, p.1 / d * r)
 }
 
-/// Direccion de avance en el mapa para un desplazamiento `v` del mundo desde `pos`. La
-/// compresion radial deforma la componente hacia/desde el sol distinto que la tangencial, y
-/// se corrige para que la flecha apunte hacia donde realmente se mueve la nave.
+
 fn direccion_en_mapa(pos: (f32, f32), v: (f32, f32), alcance: f32) -> Option<(f32, f32)> {
     let n = (v.0 * v.0 + v.1 * v.1).sqrt();
     if n < 1e-6 {
@@ -155,8 +147,7 @@ fn paso_cinta(valor: f32) -> f32 {
     (base / 5.).max(1.)
 }
 
-// Altura en pixeles sobre la linea del horizonte para un pixel (dx, dy) del instrumento
-// (dx a la derecha, dy hacia arriba). `k` son pixeles por radian de cabeceo.
+// Altura en pixeles sobre la linea del horizonte para un pixel (dx, dy) del instrumento (dx a la derecha, dy hacia arriba). `k` son pixeles por radian de cabeceo.
 fn sobre_horizonte(dx: f32, dy: f32, actitud: (f32, f32, f32), k: f32) -> f32 {
     let (sp, sr, cu) = actitud;
     let n = (sr * sr + cu * cu).sqrt();
@@ -489,7 +480,6 @@ fn texto_derecha(b: &mut Band, x_der: i32, y: i32, s: &str, scale: i32, c: Color
     text(b, x_der - ancho_texto(s, scale), y, s, scale, c);
 }
 
-// ---------------------------------------------------------------- componentes
 
 fn lista_cercanos(b: &mut Band, hud: &Datos, x: i32, y: i32) {
     if b.y1 <= y || b.y0 >= y + 230 {

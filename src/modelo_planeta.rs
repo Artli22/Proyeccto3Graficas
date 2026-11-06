@@ -1,6 +1,4 @@
-//! Cuerpos celestes cargados desde un .obj (Mogo, Unicron).
-//! El OBJ solo trae geometria y nombres de material; el color sale del .mtl si existe junto
-//! al OBJ (`Kd`) y, si no, de una paleta por nombre de material.
+
 use crate::planeta::Malla;
 use cohete::color::Relleno;
 use raylib::prelude::{Color, Vector3};
@@ -138,9 +136,6 @@ pub fn cargar(ruta: &str, nucleo: &str, radio: f32) -> std::io::Result<(Malla, f
     Ok((malla, extension))
 }
 
-/// Simplificacion por agrupacion de vertices: se divide el espacio en `celdas` por eje, los
-/// vertices de una misma celda se funden en su promedio y se descartan los triangulos que
-/// quedan degenerados. Se hace una sola vez al cargar; en vuelo solo se elige el nivel.
 pub fn simplificar(malla: &Malla, extension: f32, celdas: u32) -> Malla {
     let lado = (2. * extension / celdas.max(1) as f32).max(1e-6);
     let celda = |v: Vector3| {

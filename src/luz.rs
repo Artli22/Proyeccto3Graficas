@@ -4,13 +4,9 @@ const AMBIENTE: f32 = 0.12;
 const INTENSIDAD_DIFUSA: f32 = 0.70;
 const INTENSIDAD_ESPECULAR: f32 = 0.85;
 const BRILLO: f32 = 40.0;
-/// Distancia (unidades) a la que la luz del sol cae a la mitad.
 const DISTANCIA_MEDIA_SOL: f32 = 4800.0;
-/// Fraccion minima de la luz del sol: los mundos lejanos se ven oscuros pero no desaparecen.
 const LUZ_MINIMA: f32 = 0.2;
-/// Suavizado del terminador: cuanto de la cara opuesta recibe luz rasante.
 const ENVOLVENTE: f32 = 0.12;
-/// Tinte de la luz directa del sol (calida) y del ambiente (espacio, ligeramente frio).
 const TINTE_SOL: [f32; 3] = [1.0, 0.94, 0.82];
 const TINTE_AMBIENTE: [f32; 3] = [0.80, 0.88, 1.0];
 

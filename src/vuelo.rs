@@ -1,8 +1,8 @@
-//! Estado de vuelo y camara de seguimiento, calculados exclusivamente en CPU.
+
 use crate::pipeline::Mat4;
 use raylib::prelude::Vector3;
 
-/// Base ortonormal que reemplaza a yaw/pitch mientras la nave esta posada (right x forward = up).
+/// Base ortonormal que reemplaza a yaw/pitch mientras la nave esta posada.
 #[derive(Clone, Copy)]
 pub struct Base {
     pub right: Vector3,
@@ -17,7 +17,6 @@ pub struct Nave {
     pub velocity: Vector3,
     pub speed_kmh: f32,
     pub base: Option<Base>,
-    /// Velocidad (unidades/s) acumulada por la gravedad de los planetas, independiente del rumbo.
     pub deriva: Vector3,
 }
 impl Nave {
