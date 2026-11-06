@@ -1,5 +1,6 @@
 
 use crate::pipeline::{Mat4, Uniforms, FAR, NEAR};
+use crate::sol::{Sol, RADIO_SOL};
 use cohete::color::Relleno;
 use raylib::prelude::{Color, Vector3};
 use std::collections::HashMap;
@@ -65,8 +66,13 @@ fn ruido(p: Vector3, semilla: u32) -> f32 {
 }
 
 fn fbm(dir: Vector3, semilla: u32) -> f32 {
-    let (mut total, mut amplitud, mut frecuencia, mut suma) = (0., 1., 1.8, 0.);
-    for octava in 0..5 {
+    fbm_n(dir, semilla, 5, 1.8)
+}
+
+// Ruido fractal con `octavas` capas; menos capas cuestan menos por fragmento.
+pub(crate) fn fbm_n(dir: Vector3, semilla: u32, octavas: u32, frecuencia_base: f32) -> f32 {
+    let (mut total, mut amplitud, mut frecuencia, mut suma) = (0., 1., frecuencia_base, 0.);
+    for octava in 0..octavas {
         total += ruido(dir * frecuencia, semilla.wrapping_add(octava * 101)) * amplitud;
         suma += amplitud;
         amplitud *= 0.5;
@@ -75,7 +81,7 @@ fn fbm(dir: Vector3, semilla: u32) -> f32 {
     total / suma
 }
 
-fn mezcla(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+pub(crate) fn mezcla(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     let t = t.clamp(0., 1.);
     [
         a[0] + (b[0] - a[0]) * t,
@@ -224,6 +230,58 @@ pub struct Malla {
     pub triangulos: Vec<[Vector3; 3]>,
     pub normales: Vec<Vector3>,
     pub rellenos: Vec<Relleno>,
+}
+
+/// Esfera lisa de un solo color, con las normales hacia afuera (la usa el sol).
+pub(crate) fn malla_esfera(radio: f32, subdivisiones: u32, color: Color) -> Malla {
+    let (mut vertices, mut caras) = icosaedro();
+    for _ in 0..subdivisiones {
+        caras = subdividir(&mut vertices, &caras);
+    }
+    let mut malla = Malla {
+        triangulos: Vec::with_capacity(caras.len()),
+        normales: Vec::with_capacity(caras.len()),
+        rellenos: Vec::with_capacity(caras.len()),
+    };
+    for cara in &caras {
+        let mut tri = cara.map(|v| vertices[v] * radio);
+        let centroide = (tri[0] + tri[1] + tri[2]) / 3.;
+        let mut normal = (tri[1] - tri[0]).cross(tri[2] - tri[0]);
+        if normal.dot(centroide) < 0. {
+            tri.swap(1, 2);
+            normal = -normal;
+        }
+        malla.triangulos.push(tri);
+        malla.normales.push(normal.normalized());
+        malla.rellenos.push(Relleno::Solido(color));
+    }
+    malla
+}
+
+/// Descarte de una esfera contra el frustum. Devuelve su radio aparente en pixeles o `None`
+/// si no puede verse. `radio_limite` envuelve todo el cuerpo (anillos incluidos).
+pub(crate) fn proyeccion_esfera(
+    u: &Uniforms,
+    centro: Vector3,
+    radio_limite: f32,
+    radio: f32,
+) -> Option<f32> {
+    let c = u.camera_point(centro);
+    let r = radio_limite;
+    if c.z + r < NEAR || c.z - r > FAR {
+        return None;
+    }
+    let (a, b) = (u.projection.0[0][0], u.projection.0[1][1]);
+    for (coef, eje) in [(a, c.x), (b, c.y)] {
+        let norma = (1. + coef * coef).sqrt();
+        if c.z + coef * eje < -r * norma || c.z - coef * eje < -r * norma {
+            return None;
+        }
+    }
+    if c.z <= radio {
+        return Some(f32::MAX);
+    }
+    Some(radio * u.height / c.z)
 }
 
 fn construir_malla(config: &PlanetaConfig, subdivisiones: u32) -> Malla {
@@ -422,22 +480,7 @@ impl Planeta {
     /// Descarte por esfera contra el frustum. Devuelve el radio aparente en pixeles
     /// o `None` si el cuerpo no puede verse.
     pub fn proyeccion(&self, u: &Uniforms) -> Option<f32> {
-        let c = u.camera_point(self.centro);
-        let r = self.radio_limite;
-        if c.z + r < NEAR || c.z - r > FAR {
-            return None;
-        }
-        let (a, b) = (u.projection.0[0][0], u.projection.0[1][1]);
-        for (coef, eje) in [(a, c.x), (b, c.y)] {
-            let norma = (1. + coef * coef).sqrt();
-            if c.z + coef * eje < -r * norma || c.z - coef * eje < -r * norma {
-                return None;
-            }
-        }
-        if c.z <= self.config.radio {
-            return Some(f32::MAX);
-        }
-        Some(self.config.radio * u.height / c.z)
+        proyeccion_esfera(u, self.centro, self.radio_limite, self.config.radio)
     }
 
     /// Malla segun el tamano aparente: menos triangulos cuanto mas pequeno se ve.
@@ -455,6 +498,10 @@ impl Planeta {
 
 pub struct SistemaPlanetario {
     pub planetas: Vec<Planeta>,
+    /// Fuente de luz y centro de las orbitas.
+    pub sol: Sol,
+    /// Segundos simulados; anima el shader del sol.
+    pub tiempo: f32,
 }
 
 const RADIO_TIERRA: f32 = 150.;
@@ -473,8 +520,7 @@ impl SistemaPlanetario {
             frecuencia,
             turbulencia,
         };
-        // Distancias y tamanos comprimidos para poder recorrer el sistema; Mercurio y Pluton
-        // son comicamente pequenos y la Luna respeta la proporcion real con la Tierra.
+        
         let base = PlanetaConfig {
             nombre: "",
             radio: 0.,
@@ -621,11 +667,16 @@ impl SistemaPlanetario {
             let centro_padre = config.padre.map_or(Vector3::zero(), |p| planetas[p].centro);
             planetas.push(Planeta::nuevo(config, centro_padre));
         }
-        Self { planetas }
+        Self {
+            planetas,
+            sol: Sol::nuevo(RADIO_SOL),
+            tiempo: 0.,
+        }
     }
 
     /// Los padres van antes que sus satelites, asi el hijo hereda el movimiento ya actualizado.
     pub fn actualizar(&mut self, dt: f32) {
+        self.tiempo += dt;
         for i in 0..self.planetas.len() {
             let centro_padre = self.planetas[i]
                 .config
@@ -713,6 +764,17 @@ mod tests {
         let p = Planeta::nuevo(c, Vector3::zero());
         assert!(p.malla_lod(500.).triangulos.len() > p.malla_lod(10.).triangulos.len());
     }
+    #[test]
+    fn sun_sits_at_origin_and_planets_orbit_outside_it() {
+        let mut s = SistemaPlanetario::nuevo();
+        assert_eq!(s.sol.centro, Vector3::zero());
+        for p in s.planetas.iter().filter(|p| p.config.padre.is_none()) {
+            assert!(p.config.orbita_radio - p.config.radio > s.sol.radio + 100.);
+        }
+        s.actualizar(2.);
+        assert!((s.tiempo - 2.).abs() < 1e-6);
+    }
+
     #[test]
     fn system_has_requested_bodies_and_scales() {
         let s = SistemaPlanetario::nuevo();

@@ -151,37 +151,47 @@ impl Datos {
     ) {
         self.tiempo = tiempo_texto(tiempo);
         self.odometro = odometro_texto(recorrido_km);
-        let mut medidas: Vec<(usize, f32, Vector3)> = sistema
+        // Cada cuerpo (el sol incluido): nombre, color, altitud en metros y direccion desde su centro.
+        let mut medidas: Vec<(&'static str, Color, f32, Vector3)> = sistema
             .planetas
             .iter()
-            .enumerate()
-            .map(|(i, p)| {
+            .map(|p| {
                 let rel = nave.position - p.centro;
                 let distancia = rel.length().max(1e-3);
                 let dir = rel / distancia;
                 let superficie = p.radio_superficie(p.a_local(dir));
                 let altitud = (distancia - superficie - holgura).max(0.);
-                (i, altitud * Nave::METERS_PER_UNIT, dir)
+                (
+                    p.config.nombre,
+                    p.config.aspecto.color(),
+                    altitud * Nave::METERS_PER_UNIT,
+                    dir,
+                )
             })
             .collect();
-        medidas.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let rel_sol = nave.position - sistema.sol.centro;
+        let distancia_sol = rel_sol.length().max(1e-3);
+        medidas.push((
+            "SOL",
+            Color::new(255, 200, 60, 255),
+            (distancia_sol - sistema.sol.radio - holgura).max(0.) * Nave::METERS_PER_UNIT,
+            rel_sol / distancia_sol,
+        ));
+        medidas.sort_by(|a, b| a.2.total_cmp(&b.2));
         self.cercanos = medidas
             .iter()
             .take(5)
-            .map(|&(i, metros, _)| {
-                let p = &sistema.planetas[i];
-                Cercano {
-                    nombre: p.config.nombre,
-                    distancia: distancia_texto(metros),
-                    color: p.config.aspecto.color(),
-                }
+            .map(|&(nombre, color, metros, _)| Cercano {
+                nombre,
+                distancia: distancia_texto(metros),
+                color,
             })
             .collect();
-        if let Some(&(i, metros, dir)) = medidas.first() {
+        if let Some(&(nombre, _, metros, dir)) = medidas.first() {
             let (valor, unidad) = medida(metros);
             self.altitud = valor;
             self.unidad = unidad;
-            self.cuerpo = sistema.planetas[i].config.nombre;
+            self.cuerpo = nombre;
             self.actitud = (nave.forward().dot(dir), nave.right().dot(dir), nave.up().dot(dir));
         }
         let vuelta = |v: Vector3| (v.z.atan2(v.x) / TAU).rem_euclid(1.);

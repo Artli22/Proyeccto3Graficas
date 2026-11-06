@@ -130,6 +130,8 @@ impl FondoRosa {
             eye,
             engine_light: None,
             unlit: true,
+            sol: None,
+            emisivo: None,
         };
         for &t in mesh {
             triangle(band, t, &self.material, shader);

@@ -10,6 +10,7 @@ mod mapa;
 mod particle_renderer;
 mod pipeline;
 mod planeta;
+mod sol;
 mod sonido;
 mod thrust;
 mod triangle;
@@ -80,10 +81,11 @@ type Visible<'a> = ([ScreenVertex; 3], &'a Relleno, ShaderParams);
 
 /// Transforma y recorta los triangulos de una malla. Con `eye_local` se descartan las caras
 /// traseras en espacio local antes de transformar (solo mallas cerradas con normales).
+/// `plantilla` aporta los parametros del shader; la normal se calcula por triangulo.
 fn agregar_malla<'a>(
     malla: &'a planeta::Malla,
     uniforms: &Uniforms,
-    eye: Vector3,
+    plantilla: ShaderParams,
     eye_local: Option<Vector3>,
     salida: &mut Vec<Visible<'a>>,
 ) {
@@ -103,9 +105,7 @@ fn agregar_malla<'a>(
         }
         let shader = ShaderParams {
             normal: normal.normalized(),
-            eye,
-            engine_light: None,
-            unlit: false,
+            ..plantilla
         };
         for clipped in pipeline::clip_triangle(transformed) {
             salida.push((clipped.map(|v| pipeline::viewport(v, uniforms)), relleno, shader));
@@ -156,6 +156,8 @@ fn render(
             eye: camera.position,
             engine_light: light_pos,
             unlit: seleccionado == Some(indice),
+            sol: Some(sistema.sol.centro),
+            emisivo: None,
         };
         let material = if shader.unlit {
             &resaltado
@@ -175,6 +177,26 @@ fn render(
 
     // Cuerpos celestes: mismo pipeline (modelo -> vista -> proyeccion -> clipping) con la matriz
     // de cada uno. Se descartan los que quedan fuera de la vista y el detalle baja con la distancia.
+    // El sol se dibuja con su shader emisivo; planetas y anillos reciben luz desde el sol.
+    let base = ShaderParams {
+        normal: Vector3::zero(),
+        eye: camera.position,
+        engine_light: None,
+        unlit: false,
+        sol: Some(sistema.sol.centro),
+        emisivo: None,
+    };
+    if let Some(radio_px) = sistema.sol.proyeccion(matrices) {
+        let mut uniforms = *matrices;
+        uniforms.model = sistema.sol.matriz_modelo();
+        let plantilla = ShaderParams {
+            sol: None,
+            emisivo: Some((sistema.sol.centro, sistema.tiempo)),
+            ..base
+        };
+        let eye = camera.position - sistema.sol.centro;
+        agregar_malla(sistema.sol.malla_lod(radio_px), &uniforms, plantilla, Some(eye), &mut opacos);
+    }
     for planeta in &sistema.planetas {
         let Some(radio_px) = planeta.proyeccion(matrices) else {
             continue;
@@ -182,9 +204,9 @@ fn render(
         let mut uniforms = *matrices;
         uniforms.model = planeta.matriz_modelo();
         let eye = planeta.a_local(camera.position - planeta.centro);
-        agregar_malla(planeta.malla_lod(radio_px), &uniforms, camera.position, Some(eye), &mut opacos);
+        agregar_malla(planeta.malla_lod(radio_px), &uniforms, base, Some(eye), &mut opacos);
         if let Some(anillo) = &planeta.anillo {
-            agregar_malla(anillo, &uniforms, camera.position, None, &mut opacos);
+            agregar_malla(anillo, &uniforms, base, None, &mut opacos);
         }
     }
     let profundidad = |t: &Visible| t.0[0].screen.z + t.0[1].screen.z + t.0[2].screen.z;

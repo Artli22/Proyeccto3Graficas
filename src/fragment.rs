@@ -1,5 +1,5 @@
 //! Fragment shader propio ejecutado por la CPU, no GLSL.
-use crate::luz::sombrear;
+use crate::luz::{atenuacion, direccion_fija, sombrear};
 use cohete::color::Relleno;
 use raylib::prelude::{Color, Vector2, Vector3};
 #[derive(Clone, Copy)]
@@ -8,6 +8,10 @@ pub struct ShaderParams {
     pub eye: Vector3,
     pub engine_light: Option<(Vector3, f32)>,
     pub unlit: bool,
+    /// Posicion de la fuente de luz principal (el sol); sin ella se usa una direccion fija.
+    pub sol: Option<Vector3>,
+    /// Superficie que emite luz propia: centro del cuerpo y tiempo para animarla.
+    pub emisivo: Option<(Vector3, f32)>,
 }
 pub struct Fragment {
     pub world: Vector3,
@@ -24,11 +28,27 @@ pub fn fragment_shader(f: &Fragment, material: &Relleno, u: ShaderParams) -> Col
     } else {
         Vector3::new(0., 0., 1.)
     };
+    if let Some((centro, tiempo)) = u.emisivo {
+        return crate::sol::color_estrella(f.world, centro, view, tiempo);
+    }
     let mut normal = u.normal;
     if normal.dot(view) < 0. {
         normal = -normal;
     }
-    let mut light = sombrear(normal, view);
+    // La luz sale del sol: direccion e intensidad se calculan para cada fragmento.
+    let (luz, intensidad) = match u.sol {
+        Some(posicion) => {
+            let hacia_sol = posicion - f.world;
+            let distancia = hacia_sol.length();
+            if distancia > 1e-3 {
+                (hacia_sol / distancia, atenuacion(distancia))
+            } else {
+                (direccion_fija(), 1.)
+            }
+        }
+        None => (direccion_fija(), 1.),
+    };
+    let mut light = sombrear(normal, view, luz, intensidad);
     if let Some((position, power)) = u.engine_light {
         let delta = position - f.world;
         let distance = delta.length();
@@ -56,8 +76,54 @@ mod tests {
             eye: Vector3::new(0., 0., 4.),
             engine_light: None,
             unlit: true,
+            sol: None,
+            emisivo: None,
         };
         let output = fragment_shader(&f, &Relleno::Solido(color), params);
         assert_eq!([output.r, output.g, output.b, output.a], [255, 0, 255, 200]);
+    }
+
+    fn brillo(c: Color) -> u32 {
+        c.r as u32 + c.g as u32 + c.b as u32
+    }
+
+    #[test]
+    fn sun_lights_the_side_that_faces_it() {
+        let sol = Vector3::new(1000., 0., 0.);
+        let punto = Fragment {
+            world: Vector3::new(100., 0., 0.),
+            uv: Vector2::zero(),
+        };
+        let material = Relleno::Solido(Color::new(120, 120, 120, 255));
+        let con = |normal: Vector3| ShaderParams {
+            normal,
+            eye: Vector3::new(100., 0., 500.),
+            engine_light: None,
+            unlit: false,
+            sol: Some(sol),
+            emisivo: None,
+        };
+        let iluminado = fragment_shader(&punto, &material, con(Vector3::new(1., 0., 0.)));
+        let a_oscuras = fragment_shader(&punto, &material, con(Vector3::new(-1., 0., 0.)));
+        assert!(brillo(iluminado) > brillo(a_oscuras));
+    }
+
+    #[test]
+    fn emissive_surface_ignores_scene_lighting() {
+        let f = Fragment {
+            world: Vector3::new(0., 0., 700.),
+            uv: Vector2::zero(),
+        };
+        let material = Relleno::Solido(Color::BLACK);
+        let params = ShaderParams {
+            normal: Vector3::new(0., 0., 1.),
+            eye: Vector3::new(0., 0., 2000.),
+            engine_light: None,
+            unlit: false,
+            sol: Some(Vector3::new(-5000., 0., 0.)),
+            emisivo: Some((Vector3::zero(), 3.)),
+        };
+        // Un material negro seguiria negro si la superficie dependiera de la luz externa.
+        assert!(brillo(fragment_shader(&f, &material, params)) > 100);
     }
 }

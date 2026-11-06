@@ -80,6 +80,15 @@ impl GestorAterrizaje {
             Estado::EnVuelo
         };
         let holgura = size * HOLGURA;
+        let rel_sol = nave.position - sistema.sol.centro;
+        let limite_sol = sistema.sol.radio + holgura;
+        let distancia_sol = rel_sol.length();
+        if distancia_sol < limite_sol {
+            nave.position = sistema.sol.centro + rel_sol / distancia_sol.max(1e-3) * limite_sol;
+            nave.set_speed(0.);
+            self.aviso_colision = 2.;
+            self.estado = Estado::Colision;
+        }
         let mut aproximando = false;
         for (i, planeta) in sistema.planetas.iter().enumerate() {
             let radio = planeta.config.radio;
@@ -271,6 +280,25 @@ mod tests {
         gestor.superficie(&mut nave, &sistema, 0., true);
         assert!(!gestor.posada());
         assert!(nave.base.is_none());
+    }
+
+    #[test]
+    fn sun_blocks_the_ship_and_reports_collision() {
+        let sistema = SistemaPlanetario::nuevo();
+        let mut nave = Nave::new();
+        nave.position = sistema.sol.centro + Vector3::new(0., 0., 3000.);
+        nave.liberar_base(Vector3::new(0., 0., -1.));
+        nave.set_speed(Nave::MAX_SPEED_KMH);
+        let mut gestor = GestorAterrizaje::nuevo();
+        let mut choco = false;
+        for _ in 0..2000 {
+            nave.step(0., 0., true, 1., 0.05);
+            gestor.vuelo(&mut nave, &sistema, 13., 0.05);
+            let d = (nave.position - sistema.sol.centro).length();
+            assert!(d >= sistema.sol.radio, "la nave atraveso el sol");
+            choco |= gestor.titulo() == "COLISION";
+        }
+        assert!(choco, "debio registrarse la colision con el sol");
     }
 
     #[test]
