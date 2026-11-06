@@ -1,4 +1,4 @@
-//! Campo estelar CPU: estrellas distantes y motas con paralaje para percibir el vuelo.
+
 use crate::framebuffer::Band;
 use crate::pipeline::Uniforms;
 use raylib::prelude::{Color, Vector3};
@@ -59,7 +59,6 @@ impl Estrellas {
         }
         Self { distant, nearby }
     }
-    /// Se proyecta UNA vez por cuadro, no por franja ni por pixel.
     pub fn preparar(&self, u: &Uniforms, eye: Vector3, ship_size: f32) -> Vec<StarScreen> {
         let mut out = Vec::new();
         let mut project = |p: Vector3, star: &Star, brightness: f32| {
@@ -88,7 +87,6 @@ impl Estrellas {
         for star in &self.distant {
             project(u.camera_direction(star.position), star, 1.);
         }
-        // Cubo periodico anclado al MUNDO, no a la pantalla. Suavizar al reciclar bordes.
         let range = ship_size * 18.;
         for star in &self.nearby {
             let wrap = |x: f32| (x + range).rem_euclid(2. * range) - range;

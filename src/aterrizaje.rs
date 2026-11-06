@@ -22,6 +22,8 @@ const ACEL_ASISTENTE: f32 = 150.;
 pub const HOLGURA: f32 = 0.2;
 /// Componente minima de avance hacia el suelo para considerar un aterrizaje.
 const MIN_DESCENSO: f32 = 0.05;
+/// Fraccion por segundo de la deriva gravitatoria que se pierde (velocidad terminal = g / k).
+const AMORTIGUACION_DERIVA: f32 = 0.5;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Estado {
@@ -85,11 +87,13 @@ impl GestorAterrizaje {
         let distancia_sol = rel_sol.length();
         if distancia_sol < limite_sol {
             nave.position = sistema.sol.centro + rel_sol / distancia_sol.max(1e-3) * limite_sol;
+            nave.deriva = Vector3::zero();
             nave.set_speed(0.);
             self.aviso_colision = 2.;
             self.estado = Estado::Colision;
         }
         let mut aproximando = false;
+        self.aplicar_gravedad(nave, sistema, dt);
         for (i, planeta) in sistema.planetas.iter().enumerate() {
             let radio = planeta.config.radio;
             let altura = (nave.position - planeta.centro).length() - radio;
@@ -117,6 +121,7 @@ impl GestorAterrizaje {
             }
 
             if distancia <= contacto {
+                nave.deriva = Vector3::zero();
                 nave.position = planeta.centro + dir * contacto;
                 if descenso > MIN_DESCENSO {
                     if nave.speed_kmh <= VELOCIDAD_ATERRIZAJE {
@@ -133,6 +138,18 @@ impl GestorAterrizaje {
         if self.aviso_colision <= 0. && aproximando {
             self.estado = Estado::Aproximando;
         }
+    }
+
+    /// La atraccion de cada planeta acelera una deriva que se suma al movimiento de la nave;
+    /// el amortiguamiento la disipa al alejarse y limita la velocidad de caida.
+    fn aplicar_gravedad(&self, nave: &mut Nave, sistema: &SistemaPlanetario, dt: f32) {
+        let mut aceleracion = Vector3::zero();
+        for planeta in &sistema.planetas {
+            aceleracion += planeta.aceleracion_gravedad(nave.position);
+        }
+        nave.deriva += aceleracion * dt;
+        nave.deriva *= (-AMORTIGUACION_DERIVA * dt).exp();
+        nave.position += nave.deriva * dt;
     }
 
     fn posar(
@@ -280,6 +297,24 @@ mod tests {
         gestor.superficie(&mut nave, &sistema, 0., true);
         assert!(!gestor.posada());
         assert!(nave.base.is_none());
+    }
+
+    #[test]
+    fn gravity_pulls_idle_ship_and_stronger_for_bigger_planets() {
+        let caida = |nombre: &str| {
+            let (mut nave, sistema, i) = escena(nombre, 300.);
+            let radio = sistema.planetas[i].config.radio;
+            nave.position = sistema.planetas[i].centro + Vector3::new(0., radio * 2., 0.);
+            let antes = (nave.position - sistema.planetas[i].centro).length();
+            let mut gestor = GestorAterrizaje::nuevo();
+            for _ in 0..20 {
+                gestor.vuelo(&mut nave, &sistema, 13., 0.05);
+            }
+            antes - (nave.position - sistema.planetas[i].centro).length()
+        };
+        let (luna, jupiter) = (caida("LUNA"), caida("JUPITER"));
+        assert!(luna > 0., "la gravedad debe acercar la nave");
+        assert!(jupiter > luna, "un planeta mayor atrae mas");
     }
 
     #[test]

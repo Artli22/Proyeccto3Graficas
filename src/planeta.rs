@@ -36,7 +36,15 @@ pub struct PlanetaConfig {
     pub relieve: f32, 
     pub aspecto: Aspecto,
     pub anillo: Option<(f32, f32)>,
+    /// Aceleracion gravitatoria en la superficie (unidades/s^2). `None` la deriva del radio
+    /// (`GRAVEDAD_POR_RADIO * radio`), de modo que los cuerpos grandes atraen mas.
+    pub gravedad: Option<f32>,
 }
+
+/// Gravedad superficial por unidad de radio cuando el planeta no define `gravedad`.
+pub const GRAVEDAD_POR_RADIO: f32 = 0.01;
+/// Alcance de la gravedad sobre la superficie, en radios del cuerpo.
+pub const GRAVEDAD_ALCANCE: f32 = 4.;
 
 const NIVEL_MAR: f32 = 0.5;
 
@@ -429,6 +437,30 @@ impl Planeta {
         radio_en(&self.config, fbm(dir, self.config.semilla))
     }
 
+    /// Aceleracion gravitatoria en la superficie (unidades/s^2).
+    pub fn gravedad_superficie(&self) -> f32 {
+        self.config
+            .gravedad
+            .unwrap_or(GRAVEDAD_POR_RADIO * self.config.radio)
+            .max(0.)
+    }
+
+    /// Aceleracion (unidades/s^2) que este cuerpo ejerce sobre un punto del mundo: apunta al
+    /// centro, cae con el cuadrado de la distancia y se apaga suavemente al llegar al alcance.
+    pub fn aceleracion_gravedad(&self, punto: Vector3) -> Vector3 {
+        let radio = self.config.radio;
+        let rel = self.centro - punto;
+        let distancia = rel.length().max(radio);
+        let alcance = GRAVEDAD_ALCANCE * radio;
+        let t = (1. - (distancia - radio) / alcance).clamp(0., 1.);
+        let ventana = t * t * (3. - 2. * t);
+        let magnitud = self.gravedad_superficie() * (radio / distancia).powi(2) * ventana;
+        if rel.length() < 1e-3 {
+            return Vector3::zero();
+        }
+        rel.normalized() * magnitud
+    }
+
     fn posicion_orbital(&self) -> Vector3 {
         let (s, c) = self.angulo_orbita.sin_cos();
         Vector3::new(c * self.config.orbita_radio, 0., s * self.config.orbita_radio)
@@ -535,6 +567,7 @@ impl SistemaPlanetario {
             relieve: 0.,
             aspecto: Aspecto::Tierra,
             anillo: None,
+            gravedad: None,
         };
         let configs = [
             PlanetaConfig {
@@ -710,6 +743,7 @@ mod tests {
             relieve: 0.1,
             aspecto: Aspecto::Tierra,
             anillo: None,
+            gravedad: None,
         }
     }
     #[test]
@@ -730,6 +764,23 @@ mod tests {
             let r = p.radio_superficie(d);
             assert!(r >= 100. - 1e-3 && r <= 100. * 1.1 + 1e-3);
         }
+    }
+    #[test]
+    fn gravity_points_to_center_scales_with_size_and_is_overridable() {
+        let p = Planeta::nuevo(config(0.), Vector3::zero());
+        let punto = p.centro + Vector3::new(0., 200., 0.);
+        let a = p.aceleracion_gravedad(punto);
+        assert!(a.y < 0. && a.x.abs() < 1e-4 && a.z.abs() < 1e-4);
+        assert!(p.aceleracion_gravedad(p.centro + Vector3::new(0., 150., 0.)).length() > a.length());
+        let lejos = p.centro + Vector3::new(0., 100. * (GRAVEDAD_ALCANCE + 1.5), 0.);
+        assert_eq!(p.aceleracion_gravedad(lejos).length(), 0.);
+        let mut grande = config(0.);
+        grande.radio = 200.;
+        let g = Planeta::nuevo(grande, Vector3::zero());
+        assert!(g.gravedad_superficie() > p.gravedad_superficie());
+        let mut fija = config(0.);
+        fija.gravedad = Some(9.);
+        assert_eq!(Planeta::nuevo(fija, Vector3::zero()).gravedad_superficie(), 9.);
     }
     #[test]
     fn local_world_rotation_roundtrip() {

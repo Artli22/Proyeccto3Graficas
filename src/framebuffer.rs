@@ -10,8 +10,6 @@ pub struct Framebuffer {
     texture: Texture2D,
 }
 
-// Franja horizontal del framebuffer. Cada hilo trabaja sobre una franja distinta,
-// por lo que no hay datos compartidos ni bloqueos al dibujar.
 pub struct Band<'a> {
     pub width: i32,
     pub y0: i32,
@@ -29,7 +27,6 @@ impl Band<'_> {
         self.zbuffer.fill(f32::INFINITY);
     }
 
-    /// Fondo: escritura de color exclusivamente, sin tocar la profundidad.
     pub fn background_pixel(&mut self, x: i32, y: i32, color: Color) {
         if x < 0 || x >= self.width || y < self.y0 || y >= self.y1 {
             return;
@@ -38,7 +35,6 @@ impl Band<'_> {
         self.pixels[index..index + 4].copy_from_slice(&[color.r, color.g, color.b, 255]);
     }
 
-    /// Pixel de interfaz: mezcla alfa sobre lo ya dibujado, sin leer ni escribir profundidad.
     pub fn overlay_pixel(&mut self, x: i32, y: i32, color: Color) {
         if x < 0 || x >= self.width || y < self.y0 || y >= self.y1 || color.a == 0 {
             return;
@@ -70,7 +66,6 @@ impl Band<'_> {
         self.current_color = color;
     }
 
-    // Mezcla alfa entera para partículas translúcidas (sin escribir profundidad).
     pub fn blend(&mut self, x: i32, y: i32, depth: f32, rgb: [u8; 3], alpha: u32) {
         if x < 0 || x >= self.width || y < self.y0 || y >= self.y1 {
             return;

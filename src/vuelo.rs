@@ -17,6 +17,8 @@ pub struct Nave {
     pub velocity: Vector3,
     pub speed_kmh: f32,
     pub base: Option<Base>,
+    /// Velocidad (unidades/s) acumulada por la gravedad de los planetas, independiente del rumbo.
+    pub deriva: Vector3,
 }
 impl Nave {
     pub fn new() -> Self {
@@ -27,6 +29,7 @@ impl Nave {
             velocity: Vector3::zero(),
             speed_kmh: 0.,
             base: None,
+            deriva: Vector3::zero(),
         }
     }
     pub fn forward(&self) -> Vector3 {

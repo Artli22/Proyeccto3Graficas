@@ -1,4 +1,4 @@
-//! Fragment shader propio ejecutado por la CPU, no GLSL.
+
 use crate::luz::{atenuacion, direccion_fija, sombrear};
 use cohete::color::Relleno;
 use raylib::prelude::{Color, Vector2, Vector3};
@@ -8,9 +8,7 @@ pub struct ShaderParams {
     pub eye: Vector3,
     pub engine_light: Option<(Vector3, f32)>,
     pub unlit: bool,
-    /// Posicion de la fuente de luz principal (el sol); sin ella se usa una direccion fija.
     pub sol: Option<Vector3>,
-    /// Superficie que emite luz propia: centro del cuerpo y tiempo para animarla.
     pub emisivo: Option<(Vector3, f32)>,
 }
 pub struct Fragment {
@@ -35,7 +33,6 @@ pub fn fragment_shader(f: &Fragment, material: &Relleno, u: ShaderParams) -> Col
     if normal.dot(view) < 0. {
         normal = -normal;
     }
-    // La luz sale del sol: direccion e intensidad se calculan para cada fragmento.
     let (luz, intensidad) = match u.sol {
         Some(posicion) => {
             let hacia_sol = posicion - f.world;
@@ -123,7 +120,6 @@ mod tests {
             sol: Some(Vector3::new(-5000., 0., 0.)),
             emisivo: Some((Vector3::zero(), 3.)),
         };
-        // Un material negro seguiria negro si la superficie dependiera de la luz externa.
         assert!(brillo(fragment_shader(&f, &material, params)) > 100);
     }
 }

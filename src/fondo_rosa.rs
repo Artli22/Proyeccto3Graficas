@@ -1,4 +1,4 @@
-//! Decoracion plana OBJ y brillo emisivo, preparados y dibujados exclusivamente en CPU.
+
 use crate::fragment::ShaderParams;
 use crate::framebuffer::Band;
 use crate::pipeline::{self, Mat4, ScreenVertex, Uniforms};
@@ -13,7 +13,6 @@ pub struct FondoRosa {
 }
 impl FondoRosa {
     pub const WIDTH_IN_SHIPS: f32 = 75.;
-    // Direccion fija en el cielo. Sigue la traslacion de la camara como las estrellas lejanas.
     pub const OFFSET_IN_SHIPS: [f32; 3] = [0., -2., -90.];
     pub fn load(path: &str) -> std::io::Result<Self> {
         let model = Model::load_obj(path)?;
@@ -44,7 +43,6 @@ impl FondoRosa {
         let scale = (width - 2 * padding) as f32 / span;
         let rows = (height * scale).ceil() as usize + 2 * padding;
         let mut mask = vec![0.; width * rows];
-        // Rasterizar los 15840 triangulos del OBJ original una sola vez, con 4 muestras.
         for tri in &model.triangles {
             let p = tri.vertices.map(|v| {
                 Vector2::new(
@@ -54,8 +52,6 @@ impl FondoRosa {
             });
             raster_mask(&mut mask, width, rows, p);
         }
-        // Los puntos originales miden apenas ~1 pixel al reducirse en pantalla.
-        // Engrosar su mascara evita que se pierdan y parezcan estrellas dispersas.
         let mask = dilate(&mask, width, rows, 2);
         let tight = blur(&mask, width, rows, 2, 3);
         let wide = blur(&mask, width, rows, 7, 3);
