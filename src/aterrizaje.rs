@@ -1,29 +1,36 @@
-//! Aproximacion asistida, colision y aterrizaje sobre planetas procedurales.
-//! Mientras la nave esta posada su posicion se guarda en el marco local del planeta,
-//! asi que gira y orbita junto con el.
+
 use crate::planeta::SistemaPlanetario;
 use crate::vuelo::{Base, Nave};
 use raylib::prelude::Vector3;
 
-/// Se muestra el aviso de aproximacion a esta altura sobre la superficie, en radios del cuerpo.
+
 const ALTURA_AVISO: f32 = 3.0;
-/// El cuerpo arrastra a la nave (marco de referencia comovil) por debajo de esta altura:
-/// 2.5 radios, con un minimo en unidades para que los cuerpos pequenos tambien la tengan.
 const ALTURA_ARRASTRE: f32 = 2.5;
 const ARRASTRE_MINIMO: f32 = 300.;
-/// Velocidad maxima permitida al tocar el suelo (km/h).
 const VELOCIDAD_ATERRIZAJE: f32 = 800.;
-/// Velocidad objetivo al contacto (km/h).
 const VELOCIDAD_CONTACTO: f32 = 400.;
-/// Frenado constante (unidades/s^2) que el asistente permite al descender: define la
-/// velocidad maxima segun la altura, v = sqrt(2 a h), y llega a VELOCIDAD_CONTACTO en el suelo.
 const ACEL_ASISTENTE: f32 = 150.;
-/// Distancia centro-nave a superficie estando posada, relativa al tamano de la nave.
 pub const HOLGURA: f32 = 0.2;
-/// Componente minima de avance hacia el suelo para considerar un aterrizaje.
 const MIN_DESCENSO: f32 = 0.05;
-/// Fraccion por segundo de la deriva gravitatoria que se pierde (velocidad terminal = g / k).
 const AMORTIGUACION_DERIVA: f32 = 0.5;
+/// Inclinacion maxima de la nariz respecto al horizonte local en el modo local (rad).
+const INCLINACION_LOCAL: f32 = 1.2;
+/// Salir del modo local al superar el alcance por este factor (histeresis).
+const HISTERESIS_LOCAL: f32 = 1.5;
+
+/// Distancia sobre la superficie dentro de la cual puede activarse el modo local.
+fn alcance_local(radio: f32) -> f32 {
+    (ALTURA_ARRASTRE * radio).max(ARRASTRE_MINIMO)
+}
+
+/// Modo local: los controles son relativos al cuerpo. A/D giran el rumbo sobre el horizonte
+/// local y W/S inclinan la nariz respecto a el, asi que se rodea el planeta sin apuntarle.
+#[derive(Clone, Copy)]
+struct Orbita {
+    planeta: usize,
+    rumbo: Vector3, // tangente al horizonte local, en mundo
+    inclinacion: f32,
+}
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Estado {
@@ -36,9 +43,9 @@ pub enum Estado {
 #[derive(Clone, Copy)]
 struct Anclaje {
     planeta: usize,
-    normal: Vector3,   // local al planeta
-    adelante: Vector3, // local al planeta, perpendicular a `normal`
-    radio: f32,        // distancia del centro del planeta al centro de la nave
+    normal: Vector3,   
+    adelante: Vector3, 
+    radio: f32,        
 }
 
 pub struct GestorAterrizaje {
@@ -46,6 +53,7 @@ pub struct GestorAterrizaje {
     anclaje: Option<Anclaje>,
     aviso_colision: f32,
     esperar_soltar: bool,
+    orbita: Option<Orbita>,
 }
 
 impl GestorAterrizaje {
@@ -55,6 +63,7 @@ impl GestorAterrizaje {
             anclaje: None,
             aviso_colision: 0.,
             esperar_soltar: false,
+            orbita: None,
         }
     }
 
@@ -62,9 +71,9 @@ impl GestorAterrizaje {
         self.anclaje.is_some()
     }
 
-    /// Titulo corto del estado para el HUD.
     pub fn titulo(&self) -> &'static str {
         match self.estado {
+            Estado::EnVuelo | Estado::Aproximando if self.orbita.is_some() => "MODO LOCAL",
             Estado::EnVuelo => "VUELO LIBRE",
             Estado::Aproximando => "APROXIMANDO",
             Estado::Posada => "ATERRIZADO",
@@ -72,8 +81,96 @@ impl GestorAterrizaje {
         }
     }
 
-    /// Vuelo libre: arrastre del planeta, tope de velocidad al descender, colision y aterrizaje.
-    /// Se llama despues de `Nave::step`.
+    /// Activa o desactiva el modo local. Solo se activa a menos de `alcance_local` de un cuerpo
+    /// (el mas cercano) y nunca estando posada.
+    pub fn alternar_modo_local(&mut self, nave: &mut Nave, sistema: &SistemaPlanetario) {
+        if self.anclaje.is_some() {
+            return;
+        }
+        if self.orbita.take().is_some() {
+            let adelante = nave.forward();
+            nave.liberar_base(adelante);
+            return;
+        }
+        let mut mejor: Option<(usize, f32)> = None;
+        for (i, p) in sistema.planetas.iter().enumerate() {
+            let altura = (nave.position - p.centro).length() - p.config.radio;
+            if altura < alcance_local(p.config.radio) && mejor.map_or(true, |(_, a)| altura < a) {
+                mejor = Some((i, altura));
+            }
+        }
+        let Some((planeta, _)) = mejor else { return };
+        let arriba = (nave.position - sistema.planetas[planeta].centro).normalized();
+        let adelante = nave.forward();
+        let mut rumbo = adelante - arriba * adelante.dot(arriba);
+        if rumbo.length() < 1e-3 {
+            let derecha = nave.right();
+            rumbo = derecha - arriba * derecha.dot(arriba);
+        }
+        let orbita = Orbita {
+            planeta,
+            rumbo: rumbo.normalized(),
+            inclinacion: adelante
+                .dot(arriba)
+                .clamp(-1., 1.)
+                .asin()
+                .clamp(-INCLINACION_LOCAL, INCLINACION_LOCAL),
+        };
+        Self::poner_base(nave, arriba, orbita.rumbo, orbita.inclinacion);
+        self.orbita = Some(orbita);
+    }
+
+    fn poner_base(nave: &mut Nave, arriba: Vector3, rumbo: Vector3, inclinacion: f32) {
+        let (s, c) = inclinacion.sin_cos();
+        let forward = rumbo * c + arriba * s;
+        let right = forward.cross(arriba).normalized();
+        nave.base = Some(Base {
+            right,
+            up: right.cross(forward).normalized(),
+            forward,
+        });
+    }
+
+    /// Sustituye a `Nave::step` mientras el modo local esta activo. Devuelve `false` si no lo
+    /// esta (o si acaba de salir por alejarse), y entonces hay que usar `Nave::step`.
+    /// La gravedad se sigue aplicando en `vuelo`: el modo no la compensa.
+    pub fn vuelo_local(
+        &mut self,
+        nave: &mut Nave,
+        sistema: &SistemaPlanetario,
+        yaw: f32,
+        pitch: f32,
+        avanzar: bool,
+        potencia: f32,
+        dt: f32,
+    ) -> bool {
+        let Some(mut o) = self.orbita else { return false };
+        let p = &sistema.planetas[o.planeta];
+        let rel = nave.position - p.centro;
+        let distancia = rel.length().max(1e-3);
+        if distancia - p.config.radio > alcance_local(p.config.radio) * HISTERESIS_LOCAL {
+            self.orbita = None;
+            let adelante = nave.forward();
+            nave.liberar_base(adelante);
+            return false;
+        }
+        let arriba = rel / distancia;
+        let mut rumbo = o.rumbo - arriba * o.rumbo.dot(arriba);
+        if rumbo.length() < 1e-3 {
+            let derecha = nave.right();
+            rumbo = derecha - arriba * derecha.dot(arriba);
+        }
+        // Un giro a la derecha es horario visto desde la normal, es decir angulo negativo.
+        let (s, c) = (-yaw).sin_cos();
+        let rumbo = rumbo.normalized();
+        o.rumbo = (rumbo * c + arriba.cross(rumbo) * s).normalized();
+        o.inclinacion = (o.inclinacion + pitch).clamp(-INCLINACION_LOCAL, INCLINACION_LOCAL);
+        self.orbita = Some(o);
+        Self::poner_base(nave, arriba, o.rumbo, o.inclinacion);
+        nave.avanzar_en_base(avanzar, potencia, dt, Nave::LASER_THRESHOLD_KMH);
+        true
+    }
+
     pub fn vuelo(&mut self, nave: &mut Nave, sistema: &SistemaPlanetario, size: f32, dt: f32) {
         self.aviso_colision = (self.aviso_colision - dt).max(0.);
         self.estado = if self.aviso_colision > 0. {
@@ -140,8 +237,6 @@ impl GestorAterrizaje {
         }
     }
 
-    /// La atraccion de cada planeta acelera una deriva que se suma al movimiento de la nave;
-    /// el amortiguamiento la disipa al alejarse y limita la velocidad de caida.
     fn aplicar_gravedad(&self, nave: &mut Nave, sistema: &SistemaPlanetario, dt: f32) {
         let mut aceleracion = Vector3::zero();
         for planeta in &sistema.planetas {
@@ -160,6 +255,7 @@ impl GestorAterrizaje {
         normal_local: Vector3,
         radio: f32,
     ) {
+        self.orbita = None;
         let p = &sistema.planetas[planeta];
         let normal = p.a_mundo(normal_local);
         let forward = nave.forward();
@@ -194,7 +290,6 @@ impl GestorAterrizaje {
         self.estado = Estado::Posada;
     }
 
-    /// Nave posada: A/D giran sobre el terreno y ESPACIO despega. No se llama a `Nave::step`.
     pub fn superficie(
         &mut self,
         nave: &mut Nave,
@@ -215,7 +310,6 @@ impl GestorAterrizaje {
             self.estado = Estado::EnVuelo;
             return;
         }
-        // Un giro a la derecha es horario visto desde la normal, es decir angulo negativo.
         let (s, c) = (-yaw).sin_cos();
         a.adelante = (a.adelante * c + a.normal.cross(a.adelante) * s).normalized();
         self.anclaje = Some(a);
@@ -228,7 +322,6 @@ mod tests {
     use super::*;
     use crate::planeta::SistemaPlanetario;
 
-    // Nave sobre el cuerpo `nombre`, a `altura` unidades de su centro y apuntando a el.
     fn escena(nombre: &str, altura: f32) -> (Nave, SistemaPlanetario, usize) {
         let sistema = SistemaPlanetario::nuevo();
         let i = sistema.indice(nombre).unwrap();
@@ -315,6 +408,36 @@ mod tests {
         let (luna, jupiter) = (caida("LUNA"), caida("JUPITER"));
         assert!(luna > 0., "la gravedad debe acercar la nave");
         assert!(jupiter > luna, "un planeta mayor atrae mas");
+    }
+
+    #[test]
+    fn local_mode_circles_planet_without_diving_into_it() {
+        let (mut nave, sistema, i) = escena("TERRA", 300.);
+        let mut gestor = GestorAterrizaje::nuevo();
+        gestor.alternar_modo_local(&mut nave, &sistema);
+        assert_eq!(gestor.titulo(), "MODO LOCAL");
+        let p = &sistema.planetas[i];
+        let inicio = (nave.position - p.centro).normalized();
+        // Igualar la nariz al horizonte (la escena arranca apuntando al planeta).
+        assert!(gestor.vuelo_local(&mut nave, &sistema, 0., INCLINACION_LOCAL, false, 0., 0.05));
+        for _ in 0..200 {
+            assert!(gestor.vuelo_local(&mut nave, &sistema, 0., 0., true, 0.6, 0.05));
+            gestor.vuelo(&mut nave, &sistema, 13., 0.05);
+            assert!(!gestor.posada());
+            assert!((nave.position - p.centro).length() > p.config.radio);
+        }
+        let fin = (nave.position - p.centro).normalized();
+        assert!(inicio.dot(fin) < 0.95, "la nave debia rodear el planeta");
+        gestor.alternar_modo_local(&mut nave, &sistema);
+        assert!(!gestor.vuelo_local(&mut nave, &sistema, 0., 0., true, 0.6, 0.05));
+    }
+
+    #[test]
+    fn local_mode_needs_a_nearby_body() {
+        let (mut nave, sistema, _) = escena("PLUTON", 100_000.);
+        let mut gestor = GestorAterrizaje::nuevo();
+        gestor.alternar_modo_local(&mut nave, &sistema);
+        assert!(!gestor.vuelo_local(&mut nave, &sistema, 0., 0., true, 0.6, 0.05));
     }
 
     #[test]

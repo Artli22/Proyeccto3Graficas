@@ -358,6 +358,7 @@ fn main() {
     println!("W/S: subir/bajar nariz | A/D: girar izquierda/derecha | ESPACIO: acelerar (soltar: frenar) | 1/2/3: potencia 30/60/100% | laser automatico >36500 km/h | rueda/+/-: distancia de camara | R: reiniciar | clic: seleccionar | C: quitar | ESC: salir");
     println!("SISTEMA: Mercurio, Venus, Terra (+Luna), Marte, Jupiter, Saturno, Urano, Neptuno y Pluton. La nave aparece cerca de TERRA.");
     println!("ATERRIZAJE: apunta a un cuerpo y avanza; el asistente reduce la velocidad al descender. Posado: A/D giran, ESPACIO despega.");
+    println!("MODO LOCAL: cerca de un cuerpo, O lo activa/desactiva. A/D giran el rumbo sobre el horizonte del planeta, W/S inclinan la nariz respecto a el; la gravedad sigue actuando.");
     while !rl.window_should_close() {
         let now = std::time::Instant::now();
         let dt = now.duration_since(last).as_secs_f32().min(0.05);
@@ -387,12 +388,26 @@ fn main() {
             selected_power = 1.;
         }
         sistema.actualizar(dt);
+        if input.modo_local && !input.reiniciar {
+            gestor.alternar_modo_local(&mut nave, &sistema);
+        }
         let avanzando = input.avanzar && !input.reiniciar;
         if !input.reiniciar {
             if gestor.posada() {
                 gestor.superficie(&mut nave, &sistema, input.yaw, input.avanzar);
             } else {
-                nave.step(input.yaw, input.pitch, avanzando, selected_power, dt);
+                let en_local = gestor.vuelo_local(
+                    &mut nave,
+                    &sistema,
+                    input.yaw,
+                    input.pitch,
+                    avanzando,
+                    selected_power,
+                    dt,
+                );
+                if !en_local {
+                    nave.step(input.yaw, input.pitch, avanzando, selected_power, dt);
+                }
                 gestor.vuelo(&mut nave, &sistema, size, dt);
             }
         }

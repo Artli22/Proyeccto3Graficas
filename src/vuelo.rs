@@ -125,6 +125,16 @@ impl Nave {
         self.velocity = forward * (speed / 3.6 / Self::METERS_PER_UNIT);
         self.position += forward * (distance * 1000. / Self::METERS_PER_UNIT);
     }
+    /// Avance con la base ya fijada (rumbo controlado desde fuera), con tope de velocidad.
+    pub fn avanzar_en_base(&mut self, advance: bool, power: f32, dt: f32, tope_kmh: f32) {
+        let (speed, distance) =
+            Self::integrate_speed(self.speed_kmh, if advance { power } else { 0. }, dt);
+        self.speed_kmh = speed.min(tope_kmh);
+        let distance = distance.min(tope_kmh * dt.max(0.) / 3600.);
+        let forward = self.forward();
+        self.velocity = forward * (self.speed_kmh / 3.6 / Self::METERS_PER_UNIT);
+        self.position += forward * (distance * 1000. / Self::METERS_PER_UNIT);
+    }
     pub fn model_matrix(&self, center: Vector3) -> Mat4 {
         let r = -self.right();
         let u = self.up();

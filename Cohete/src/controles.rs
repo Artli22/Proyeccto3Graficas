@@ -15,6 +15,7 @@ pub struct Entrada {
     pub reiniciar: bool,
     pub clic: Option<Vector2>,
     pub quitar_seleccion: bool,
+    pub modo_local: bool,
 }
 
 pub struct Controles {
@@ -66,6 +67,9 @@ impl Controles {
         }
         if rl.is_key_pressed(KeyboardKey::KEY_C) {
             entrada.quitar_seleccion = true;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_O) {
+            entrada.modo_local = true;
         }
     }
 
