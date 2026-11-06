@@ -19,21 +19,15 @@ const VELOCIDAD_CONTACTO: f32 = 400.;
 /// velocidad maxima segun la altura, v = sqrt(2 a h), y llega a VELOCIDAD_CONTACTO en el suelo.
 const ACEL_ASISTENTE: f32 = 150.;
 /// Distancia centro-nave a superficie estando posada, relativa al tamano de la nave.
-const HOLGURA: f32 = 0.2;
+pub const HOLGURA: f32 = 0.2;
 /// Componente minima de avance hacia el suelo para considerar un aterrizaje.
 const MIN_DESCENSO: f32 = 0.05;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Estado {
     EnVuelo,
-    Aproximando {
-        planeta: usize,
-        altitud: f32,
-        progreso: f32,
-    },
-    Posada {
-        planeta: usize,
-    },
+    Aproximando,
+    Posada,
     Colision,
 }
 
@@ -66,30 +60,13 @@ impl GestorAterrizaje {
         self.anclaje.is_some()
     }
 
-    /// Texto y progreso (0..1) para el HUD.
-    pub fn hud(&self, sistema: &SistemaPlanetario) -> (String, f32) {
+    /// Titulo corto del estado para el HUD.
+    pub fn titulo(&self) -> &'static str {
         match self.estado {
-            Estado::EnVuelo => (String::new(), 0.),
-            Estado::Aproximando {
-                planeta,
-                altitud,
-                progreso,
-            } => (
-                format!(
-                    "{} ALTITUD {} M",
-                    sistema.planetas[planeta].config.nombre,
-                    (altitud.max(0.) * Nave::METERS_PER_UNIT) as u32
-                ),
-                progreso,
-            ),
-            Estado::Posada { planeta } => (
-                format!(
-                    "ATERRIZADO EN {} - ESPACIO: DESPEGAR",
-                    sistema.planetas[planeta].config.nombre
-                ),
-                1.,
-            ),
-            Estado::Colision => ("COLISION - VELOCIDAD EXCESIVA".to_string(), 0.),
+            Estado::EnVuelo => "VUELO LIBRE",
+            Estado::Aproximando => "APROXIMANDO",
+            Estado::Posada => "ATERRIZADO",
+            Estado::Colision => "COLISION",
         }
     }
 
@@ -103,7 +80,7 @@ impl GestorAterrizaje {
             Estado::EnVuelo
         };
         let holgura = size * HOLGURA;
-        let mut aviso: Option<(usize, f32, f32)> = None;
+        let mut aproximando = false;
         for (i, planeta) in sistema.planetas.iter().enumerate() {
             let radio = planeta.config.radio;
             let altura = (nave.position - planeta.centro).length() - radio;
@@ -118,8 +95,8 @@ impl GestorAterrizaje {
             let altitud = distancia - contacto;
             let descenso = -nave.forward().dot(dir);
 
-            if altitud < ALTURA_AVISO * radio && aviso.map_or(true, |(_, a, _)| altitud < a) {
-                aviso = Some((i, altitud, (1. - altitud / (ALTURA_AVISO * radio)).clamp(0., 1.)));
+            if altitud < ALTURA_AVISO * radio {
+                aproximando = true;
             }
             if descenso > MIN_DESCENSO && nave.speed_kmh > VELOCIDAD_CONTACTO {
                 let metros_a_kmh = Nave::METERS_PER_UNIT * 3.6;
@@ -144,14 +121,8 @@ impl GestorAterrizaje {
                 return;
             }
         }
-        if self.aviso_colision <= 0. {
-            if let Some((planeta, altitud, progreso)) = aviso {
-                self.estado = Estado::Aproximando {
-                    planeta,
-                    altitud,
-                    progreso,
-                };
-            }
+        if self.aviso_colision <= 0. && aproximando {
+            self.estado = Estado::Aproximando;
         }
     }
 
@@ -194,7 +165,7 @@ impl GestorAterrizaje {
         nave.position = p.centro + up * a.radio;
         nave.speed_kmh = 0.;
         nave.velocity = Vector3::zero();
-        self.estado = Estado::Posada { planeta: a.planeta };
+        self.estado = Estado::Posada;
     }
 
     /// Nave posada: A/D giran sobre el terreno y ESPACIO despega. No se llama a `Nave::step`.

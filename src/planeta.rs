@@ -84,6 +84,18 @@ fn mezcla(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     ]
 }
 
+impl Aspecto {
+    /// Color representativo del cuerpo, para el mapa y la lista del HUD.
+    pub fn color(&self) -> Color {
+        let c = match *self {
+            Aspecto::Tierra => [40., 110., 190.],
+            Aspecto::Rocoso { oscuro, claro, .. } => mezcla(oscuro, claro, 0.5),
+            Aspecto::Bandas { a, b, .. } => mezcla(a, b, 0.5),
+        };
+        Color::new(c[0] as u8, c[1] as u8, c[2] as u8, 255)
+    }
+}
+
 fn a_color(c: [f32; 3], variacion: f32) -> Color {
     let v = 1. + (variacion - 0.5) * 0.12;
     let canal = |x: f32| (x * v).clamp(0., 255.) as u8;

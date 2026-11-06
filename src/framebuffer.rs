@@ -38,6 +38,26 @@ impl Band<'_> {
         self.pixels[index..index + 4].copy_from_slice(&[color.r, color.g, color.b, 255]);
     }
 
+    /// Pixel de interfaz: mezcla alfa sobre lo ya dibujado, sin leer ni escribir profundidad.
+    pub fn overlay_pixel(&mut self, x: i32, y: i32, color: Color) {
+        if x < 0 || x >= self.width || y < self.y0 || y >= self.y1 || color.a == 0 {
+            return;
+        }
+        let index = ((y - self.y0) * self.width + x) as usize * 4;
+        let pixel = &mut self.pixels[index..index + 4];
+        if color.a == 255 {
+            pixel.copy_from_slice(&[color.r, color.g, color.b, 255]);
+            return;
+        }
+        let alpha = color.a as u32;
+        let inv = 255 - alpha;
+        let rgb = [color.r, color.g, color.b];
+        for i in 0..3 {
+            pixel[i] = ((rgb[i] as u32 * alpha + pixel[i] as u32 * inv + 127) / 255) as u8;
+        }
+        pixel[3] = 255;
+    }
+
     pub fn visible(&self, x: i32, y: i32, depth: f32) -> bool {
         if x < 0 || x >= self.width || y < self.y0 || y >= self.y1 || !depth.is_finite() {
             return false;

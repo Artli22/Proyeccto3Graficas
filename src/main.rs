@@ -6,6 +6,7 @@ mod framebuffer;
 mod hud;
 mod laser;
 mod luz;
+mod mapa;
 mod particle_renderer;
 mod pipeline;
 mod planeta;
@@ -74,7 +75,8 @@ fn boquilla(model: &Model) -> Option<(Vector3, Vector3, f32)> {
     }
     Some((pos, dir, radio * 0.6))
 }
-type Visible<'a> = ([ScreenVertex; 3], &'a Relleno, ShaderParams);
+
+type Visible<'a> = ([ScreenVertex; 3], &'a Relleno, ShaderParams);
 
 /// Transforma y recorta los triangulos de una malla. Con `eye_local` se descartan las caras
 /// traseras en espacio local antes de transformar (solo mallas cerradas con normales).
@@ -123,6 +125,7 @@ fn render(
     luz_intensidad: f32,
     estrellas: &estrellas::Estrellas,
     datos: &hud::Datos,
+    mapa: Option<&mapa::Mapa>,
     fondo_rosa: &fondo_rosa::FondoRosa,
     sistema: &SistemaPlanetario,
 ) {
@@ -219,7 +222,7 @@ fn render(
         for p in &particulas {
             particle_renderer::dibujar_particula(franja, p);
         }
-        hud::dibujar(franja, datos, SCREEN_HEIGHT);
+        hud::dibujar(franja, datos, mapa, SCREEN_HEIGHT);
     });
 }
 
@@ -262,7 +265,6 @@ fn triangulo_en(model: &Model, matrices: &Uniforms, x: f32, y: f32) -> Option<us
     mejor.map(|(indice, _)| indice)
 }
 
-/// Nave cerca de TERRA, a unos dos radios sobre su superficie y mirando hacia ella.
 fn nave_en_tierra(sistema: &SistemaPlanetario) -> Nave {
     let mut nave = Nave::new();
     if let Some(tierra) = sistema.planetas.iter().find(|p| p.config.nombre == "TERRA") {
@@ -310,6 +312,18 @@ fn main() {
     let mut selected_power = 0.6;
     let mut last = std::time::Instant::now();
     let mut gestor = GestorAterrizaje::nuevo();
+    let mut tiempo = 0f32;
+    let mut recorrido_km = 0f64;
+    let mapa = match mapa::Mapa::cargar(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/src/assets/hud/mapa.png"),
+        270,
+    ) {
+        Ok(mapa) => Some(mapa),
+        Err(e) => {
+            eprintln!("Sin mapa en el HUD: {e}");
+            None
+        }
+    };
     // El dispositivo de audio debe declararse antes que el sonido que lo usa.
     let audio = match RaylibAudio::init_audio_device() {
         Ok(audio) => Some(audio),
@@ -331,6 +345,7 @@ fn main() {
             nave = nave_en_tierra(&sistema);
             camera = Camara::new(&nave, size);
             gestor = GestorAterrizaje::nuevo();
+            tiempo = 0.;
             thrust.apagar();
             laser.apagar();
             selected = None;
@@ -360,6 +375,8 @@ fn main() {
             }
         }
         let moving = avanzando && !gestor.posada();
+        tiempo += dt;
+        recorrido_km += nave.speed_kmh as f64 * dt as f64 / 3600.;
         let propulsor = if nave.laser_mode() {
             Propulsor::Laser
         } else {
@@ -423,9 +440,9 @@ fn main() {
             (None, 0.)
         };
         let mut datos = hud::Datos::new(&nave, selected_power, moving);
-        let (texto, progreso) = gestor.hud(&sistema);
-        datos.landing_status = texto;
-        datos.landing_progress = progreso;
+        datos.estado_vuelo = gestor.titulo();
+        datos.posada = gestor.posada();
+        datos.con_sistema(&nave, &sistema, size * aterrizaje::HOLGURA, tiempo, recorrido_km);
         render(
             &mut framebuffer,
             &model,
@@ -438,6 +455,7 @@ fn main() {
             power,
             &estrellas,
             &datos,
+            mapa.as_ref(),
             &fondo_rosa,
             &sistema,
         );
