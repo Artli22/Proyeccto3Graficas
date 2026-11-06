@@ -99,9 +99,10 @@ procesados que piden el descarte y los niveles de detalle para demostrarse.
 - `src/fragment.rs`, `src/luz.rs`, `src/sol.rs`: fragment shaders e iluminación.
 - `src/planeta.rs`: cuerpos celestes procedurales, órbitas y niveles de detalle.
 - `src/vuelo.rs`, `src/aterrizaje.rs`: física de vuelo, cámara de seguimiento, asistente y colisión.
-- `src/hud.rs`, `src/mapa.rs`, `src/sonido.rs`: interfaz, mapa orbital y audio.
+- `src/hud.rs`, `src/sonido.rs`: interfaz (con mapa estelar cenital del sistema) y audio.
+- `src/modelo_planeta.rs`: carga de cuerpos desde `.obj` (Mogo, Unicron) y niveles de detalle.
 - `Cohete/`: carga de OBJ y lectura de controles.
-- `src/assets/`: modelos (`.obj`), mapa del HUD (`hud/mapa.png`) y efectos de sonido (`soundeffects/`).
+- `src/assets/`: modelos (`.obj`) y efectos de sonido (`soundeffects/`).
 
 ## Uso de IA y recursos externos
 
@@ -109,5 +110,5 @@ procesados que piden el descarte y los niveles de detalle para demostrarse.
   (planetas, sol, aterrizaje, HUD, sonido). Los integrantes deben poder explicar el código entregado.
 - Librerías: raylib 5.5.1 (crate `raylib`) para ventana, entrada, audio, decodificación de imagen
   y presentación del framebuffer.
-- Recursos externos: COMPLETAR el origen y la licencia de `src/assets/hud/mapa.png`, de los
+- Recursos externos: COMPLETAR el origen y la licencia de los
   efectos de sonido de `src/assets/soundeffects/` y del modelo `SancorSeguros1.obj`.

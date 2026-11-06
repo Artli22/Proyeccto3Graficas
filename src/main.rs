@@ -6,7 +6,6 @@ mod framebuffer;
 mod hud;
 mod laser;
 mod luz;
-mod mapa;
 mod modelo_planeta;
 mod particle_renderer;
 mod pipeline;
@@ -46,6 +45,7 @@ fn init() -> (RaylibHandle, RaylibThread) {
     let (mut rl, thread) = raylib::init()
         .size(SCREEN_WIDTH, SCREEN_HEIGHT)
         .title("Vuelo espacial CPU - tercera persona")
+        .resizable()
         .build();
     rl.set_target_fps(60);
     (rl, thread)
@@ -133,7 +133,6 @@ fn render(
     luz_intensidad: f32,
     estrellas: &estrellas::Estrellas,
     datos: &hud::Datos,
-    mapa: Option<&mapa::Mapa>,
     fondo_rosa: &fondo_rosa::FondoRosa,
     sistema: &SistemaPlanetario,
 ) {
@@ -278,7 +277,7 @@ fn render(
         for p in &particulas {
             particle_renderer::dibujar_particula(franja, p);
         }
-        hud::dibujar(franja, datos, mapa, SCREEN_HEIGHT);
+        hud::dibujar(franja, datos, SCREEN_HEIGHT);
     });
 }
 
@@ -370,16 +369,6 @@ fn main() {
     let mut gestor = GestorAterrizaje::nuevo();
     let mut tiempo = 0f32;
     let mut recorrido_km = 0f64;
-    let mapa = match mapa::Mapa::cargar(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/src/assets/hud/mapa.png"),
-        270,
-    ) {
-        Ok(mapa) => Some(mapa),
-        Err(e) => {
-            eprintln!("Sin mapa en el HUD: {e}");
-            None
-        }
-    };
     // El dispositivo de audio debe declararse antes que el sonido que lo usa.
     let audio = match RaylibAudio::init_audio_device() {
         Ok(audio) => Some(audio),
@@ -389,7 +378,7 @@ fn main() {
         }
     };
     let mut sonido = audio.as_ref().and_then(sonido::SonidoNave::cargar);
-    println!("W/S: subir/bajar nariz | A/D: girar izquierda/derecha | ESPACIO: acelerar (soltar: frenar) | 1/2/3: potencia 30/60/100% | laser automatico >36500 km/h | rueda/+/-: distancia de camara | R: reiniciar | clic: seleccionar | C: quitar | ESC: salir");
+    println!("W/S: subir/bajar nariz | A/D: girar izquierda/derecha | ESPACIO: acelerar (soltar: frenar) | 1/2/3: potencia 30/60/100% | laser automatico >36500 km/h | rueda/+/-: distancia de camara | R: reiniciar | clic: seleccionar | C: quitar | F11: pantalla completa | ESC: salir");
     println!("SISTEMA: Mercurio, Venus, Terra (+Luna), Marte, Jupiter, Saturno, Urano, Neptuno y Pluton. La nave aparece cerca de TERRA.");
     println!("ATERRIZAJE: apunta a un cuerpo y avanza; el asistente reduce la velocidad al descender. Posado: A/D giran, ESPACIO despega.");
     println!("MODO LOCAL: cerca de un cuerpo, O lo activa/desactiva. A/D giran el rumbo sobre el horizonte del planeta, W/S inclinan la nariz respecto a el; la gravedad sigue actuando.");
@@ -398,6 +387,9 @@ fn main() {
         let dt = now.duration_since(last).as_secs_f32().min(0.05);
         last = now;
         let input = controles.leer(&rl);
+        if rl.is_key_pressed(KeyboardKey::KEY_F11) {
+            rl.toggle_fullscreen();
+        }
         if input.reiniciar {
             nave = nave_en_tierra(&sistema);
             camera = Camara::new(&nave, size);
@@ -496,7 +488,10 @@ fn main() {
             SCREEN_WIDTH,
             SCREEN_HEIGHT,
         );
-        if let Some(click) = input.clic {
+        if let Some(click) = input
+            .clic
+            .and_then(|c| framebuffer.a_framebuffer(c, (rl.get_screen_width(), rl.get_screen_height())))
+        {
             selected = triangulo_en(&model, &matrices, click.x, click.y);
             if let Some(i) = selected {
                 println!("Triangulo [{i}]");
@@ -526,7 +521,6 @@ fn main() {
             power,
             &estrellas,
             &datos,
-            mapa.as_ref(),
             &fondo_rosa,
             &sistema,
         );

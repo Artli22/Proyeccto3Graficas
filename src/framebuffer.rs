@@ -4,6 +4,7 @@ use std::sync::Mutex;
 
 pub struct Framebuffer {
     pub width: i32,
+    pub height: i32,
     pixels: Vec<u8>,
     zbuffer: Vec<f32>,
     background_color: Color,
@@ -117,10 +118,12 @@ impl Framebuffer {
         let texture = rl
             .load_texture_from_image(thread, &image)
             .expect("No se pudo crear la textura del framebuffer");
+        texture.set_texture_filter(thread, TextureFilter::TEXTURE_FILTER_BILINEAR);
         let size = (width * height) as usize;
 
         Framebuffer {
             width,
+            height,
             pixels: vec![0; size * 4],
             zbuffer: vec![f32::INFINITY; size],
             background_color: Color::BLACK,
@@ -191,13 +194,57 @@ impl Framebuffer {
         self.texture
             .update_texture(&self.pixels)
             .expect("No se pudo actualizar la textura del framebuffer");
-        d.draw_texture(&self.texture, 0, 0, Color::WHITE);
+        let destino = rect_destino(self.width, self.height, d.get_screen_width(), d.get_screen_height());
+        d.clear_background(Color::BLACK);
+        d.draw_texture_pro(
+            &self.texture,
+            Rectangle::new(0., 0., self.width as f32, self.height as f32),
+            destino,
+            Vector2::zero(),
+            0.,
+            Color::WHITE,
+        );
     }
+
+    /// Convierte un punto de la ventana a coordenadas del framebuffer; `None` si cae en las
+    /// barras negras.
+    pub fn a_framebuffer(&self, punto: Vector2, ventana: (i32, i32)) -> Option<Vector2> {
+        let r = rect_destino(self.width, self.height, ventana.0, ventana.1);
+        if punto.x < r.x || punto.y < r.y || punto.x >= r.x + r.width || punto.y >= r.y + r.height {
+            return None;
+        }
+        Some(Vector2::new(
+            (punto.x - r.x) * self.width as f32 / r.width,
+            (punto.y - r.y) * self.height as f32 / r.height,
+        ))
+    }
+}
+
+/// Mayor rectangulo centrado dentro de la ventana que conserva la proporcion del framebuffer.
+fn rect_destino(ancho: i32, alto: i32, ventana_ancho: i32, ventana_alto: i32) -> Rectangle {
+    let escala = (ventana_ancho as f32 / ancho as f32).min(ventana_alto as f32 / alto as f32);
+    let (w, h) = (ancho as f32 * escala, alto as f32 * escala);
+    Rectangle::new(
+        (ventana_ancho as f32 - w) * 0.5,
+        (ventana_alto as f32 - h) * 0.5,
+        w,
+        h,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn destination_keeps_aspect_and_centers() {
+        let r = rect_destino(1200, 800, 1920, 1080);
+        assert!((r.width / r.height - 1.5).abs() < 1e-4);
+        assert!((r.height - 1080.).abs() < 1e-3);
+        assert!((r.x * 2. + r.width - 1920.).abs() < 1e-3);
+        let exacto = rect_destino(1200, 800, 1200, 800);
+        assert_eq!((exacto.x, exacto.y, exacto.width, exacto.height), (0., 0., 1200., 800.));
+    }
+
     #[test]
     fn opaque_depth_and_background() {
         let mut pixels = vec![0; 4];

@@ -1,8 +1,7 @@
-//! HUD estilo automovil (velocimetro, lista de cercanos, mapa) con instrumentos de aviacion
-//! (horizonte artificial y radar de altitud). Se dibuja pixel a pixel en CPU, sin fuentes ni
-//! dibujo de raylib.
+//! HUD estilo automovil (velocimetro, lista de cercanos, mapa estelar) con instrumentos de
+//! aviacion (horizonte artificial y radar de altitud). Se dibuja pixel a pixel en CPU, sin
+//! fuentes ni dibujo de raylib.
 use crate::framebuffer::Band;
-use crate::mapa::Mapa;
 use crate::planeta::SistemaPlanetario;
 use crate::vuelo::Nave;
 use raylib::prelude::{Color, Vector3};
@@ -46,8 +45,75 @@ pub struct Datos {
     cuerpo: &'static str,
     // sin(cabeceo), componente derecha y componente arriba de la vertical del cuerpo mas cercano
     actitud: (f32, f32, f32),
-    vuelta: f32,
-    planetas_mapa: Vec<(f32, Color)>,
+    nave_mapa: Option<NaveMapa>,
+    cuerpos_mapa: Vec<MarcaMapa>,
+    orbitas_mapa: Vec<f32>,
+}
+
+/// Mapa estelar: vista cenital con el sol al centro. Las coordenadas van en el disco unitario
+/// y la distancia al sol se comprime con raiz cuadrada para que los planetas internos no se
+/// amontonen en el centro.
+const LADO_MAPA: i32 = 220;
+const RADIO_MAPA: f32 = 104.;
+const ESTRELLAS_MAPA: u32 = 70;
+
+struct MarcaMapa {
+    x: f32,
+    y: f32,
+    color: Color,
+    radio: f32,
+    cercano: bool,
+}
+
+struct NaveMapa {
+    x: f32,
+    y: f32,
+    // Rumbo horizontal ya convertido al espacio del mapa; `None` si la nariz apunta casi vertical.
+    dir: Option<(f32, f32)>,
+}
+
+fn proyectar_mapa(p: (f32, f32), alcance: f32) -> (f32, f32) {
+    let d = (p.0 * p.0 + p.1 * p.1).sqrt();
+    if d < 1e-3 {
+        return (0., 0.);
+    }
+    let r = (d / alcance).min(1.).sqrt();
+    (p.0 / d * r, p.1 / d * r)
+}
+
+/// Direccion de avance en el mapa para un desplazamiento `v` del mundo desde `pos`. La
+/// compresion radial deforma la componente hacia/desde el sol distinto que la tangencial, y
+/// se corrige para que la flecha apunte hacia donde realmente se mueve la nave.
+fn direccion_en_mapa(pos: (f32, f32), v: (f32, f32), alcance: f32) -> Option<(f32, f32)> {
+    let n = (v.0 * v.0 + v.1 * v.1).sqrt();
+    if n < 1e-6 {
+        return None;
+    }
+    let (vx, vy) = (v.0 / n, v.1 / n);
+    let d = (pos.0 * pos.0 + pos.1 * pos.1).sqrt();
+    if d < 1e-3 {
+        return Some((vx, vy));
+    }
+    let dc = d.min(alcance);
+    let u = (pos.0 / d, pos.1 / d);
+    let t = (-u.1, u.0);
+    let (vr, vt) = (vx * u.0 + vy * u.1, vx * t.0 + vy * t.1);
+    let radial = 0.5 / (dc * alcance).sqrt();
+    let tangencial = (dc / alcance).sqrt() / dc;
+    let m = (
+        u.0 * radial * vr + t.0 * tangencial * vt,
+        u.1 * radial * vr + t.1 * tangencial * vt,
+    );
+    let l = (m.0 * m.0 + m.1 * m.1).sqrt();
+    (l > 1e-9).then(|| (m.0 / l, m.1 / l))
+}
+
+fn hash01(n: u32) -> f32 {
+    let mut h = n.wrapping_mul(0x9E37_79B1);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x85EB_CA6B);
+    h ^= h >> 13;
+    (h & 0xFFFF) as f32 / 65535.
 }
 
 fn miles(n: u32) -> String {
@@ -134,9 +200,66 @@ impl Datos {
             unidad: "M",
             cuerpo: "",
             actitud: (0., 0., 1.),
-            vuelta: 0.,
-            planetas_mapa: Vec::new(),
+            nave_mapa: None,
+            cuerpos_mapa: Vec::new(),
+            orbitas_mapa: Vec::new(),
         }
+    }
+
+    fn actualizar_mapa(&mut self, nave: &Nave, sistema: &SistemaPlanetario) {
+        let origen = sistema.sol.centro;
+        let plano = |v: Vector3| ((v - origen).x, (v - origen).z);
+        let alcance = sistema
+            .planetas
+            .iter()
+            .filter(|p| p.config.padre.is_none())
+            .map(|p| p.config.orbita_radio)
+            .fold(1., f32::max)
+            * 1.08;
+        self.orbitas_mapa = sistema
+            .planetas
+            .iter()
+            .filter(|p| p.config.padre.is_none())
+            .map(|p| (p.config.orbita_radio / alcance).sqrt())
+            .collect();
+        let cercano = self.cuerpo;
+        self.cuerpos_mapa = sistema
+            .planetas
+            .iter()
+            .map(|p| {
+                let (x, y) = match p.config.padre {
+                    None => proyectar_mapa(plano(p.centro), alcance),
+                    // La luna se dibuja junto a su planeta, en la direccion real de su orbita.
+                    Some(i) => {
+                        let padre = &sistema.planetas[i];
+                        let (px, py) = proyectar_mapa(plano(padre.centro), alcance);
+                        let (dx, dz) = (p.centro.x - padre.centro.x, p.centro.z - padre.centro.z);
+                        let n = (dx * dx + dz * dz).sqrt().max(1e-3);
+                        (px + dx / n * 8. / RADIO_MAPA, py + dz / n * 8. / RADIO_MAPA)
+                    }
+                };
+                MarcaMapa {
+                    x,
+                    y,
+                    color: p.config.aspecto.color(),
+                    radio: if p.config.padre.is_some() {
+                        1.6
+                    } else {
+                        2.2 + 0.1 * p.config.radio.sqrt()
+                    },
+                    cercano: p.config.nombre == cercano,
+                }
+            })
+            .collect();
+        let pos = plano(nave.position);
+        let (x, y) = proyectar_mapa(pos, alcance);
+        let f = nave.forward();
+        let dir = if (f.x * f.x + f.z * f.z).sqrt() > 0.15 {
+            direccion_en_mapa(pos, (f.x, f.z), alcance)
+        } else {
+            None
+        };
+        self.nave_mapa = Some(NaveMapa { x, y, dir });
     }
 
     /// Datos que dependen del sistema: cuerpos cercanos, radar de altitud, horizonte y mapa.
@@ -194,14 +317,7 @@ impl Datos {
             self.cuerpo = nombre;
             self.actitud = (nave.forward().dot(dir), nave.right().dot(dir), nave.up().dot(dir));
         }
-        let vuelta = |v: Vector3| (v.z.atan2(v.x) / TAU).rem_euclid(1.);
-        self.vuelta = vuelta(nave.position);
-        self.planetas_mapa = sistema
-            .planetas
-            .iter()
-            .filter(|p| p.config.padre.is_none())
-            .map(|p| (vuelta(p.centro), p.config.aspecto.color()))
-            .collect();
+        self.actualizar_mapa(nave, sistema);
     }
 }
 
@@ -412,43 +528,62 @@ fn temporizador(b: &mut Band, hud: &Datos, cx: i32, y: i32) {
     texto_centrado(b, cx, y + 8, &hud.tiempo, 2, BLANCO);
 }
 
-fn dibujar_mapa(b: &mut Band, hud: &Datos, mapa: &Mapa, x: i32, y: i32) {
-    if b.y1 <= y - 8 || b.y0 >= y + mapa.alto + 30 {
+fn dibujar_mapa(b: &mut Band, hud: &Datos, x: i32, y: i32) {
+    if b.y1 <= y - 8 || b.y0 >= y + LADO_MAPA + 30 {
         return;
     }
-    rect(b, x - 8, y - 8, mapa.ancho + 16, mapa.alto + 16, Color::new(10, 16, 28, 120));
-    borde(b, x - 8, y - 8, mapa.ancho + 16, mapa.alto + 16, BORDE);
-    for py in y.max(b.y0)..(y + mapa.alto).min(b.y1) {
-        for px in 0..mapa.ancho {
-            let alfa = mapa.alfa(px, py - y);
-            if alfa > 6 {
-                b.overlay_pixel(x + px, py, Color::new(235, 242, 255, alfa));
+    rect(b, x - 8, y - 8, LADO_MAPA + 16, LADO_MAPA + 16, Color::new(6, 10, 22, 170));
+    borde(b, x - 8, y - 8, LADO_MAPA + 16, LADO_MAPA + 16, BORDE);
+    let c = LADO_MAPA as f32 * 0.5;
+    let (cx, cy) = (x as f32 + c, y as f32 + c);
+    for i in 0..ESTRELLAS_MAPA {
+        let (angulo, radio) = (hash01(i * 3) * TAU, hash01(i * 3 + 1).sqrt() * (RADIO_MAPA + 4.));
+        let brillo = (50. + hash01(i * 3 + 2) * 130.) as u8;
+        rect(
+            b,
+            (cx + angulo.cos() * radio) as i32,
+            (cy + angulo.sin() * radio) as i32,
+            1,
+            1,
+            Color::new(220, 230, 255, brillo),
+        );
+    }
+    anillo(b, cx, cy, RADIO_MAPA + 4., RADIO_MAPA + 3., BORDE);
+    for &r in &hud.orbitas_mapa {
+        anillo(b, cx, cy, r * RADIO_MAPA, r * RADIO_MAPA - 1., Color::new(120, 160, 200, 55));
+    }
+    disco(b, cx, cy, 8., Color::new(255, 170, 40, 70));
+    disco(b, cx, cy, 4.6, Color::new(255, 205, 70, 255));
+    for m in &hud.cuerpos_mapa {
+        let (px, py) = (cx + m.x * RADIO_MAPA, cy + m.y * RADIO_MAPA);
+        disco(b, px, py, m.radio + 1.4, Color::new(8, 12, 22, 230));
+        disco(b, px, py, m.radio, m.color);
+        if m.cercano {
+            anillo(b, px, py, m.radio + 5., m.radio + 3.6, BLANCO);
+        }
+    }
+    if let Some(n) = &hud.nave_mapa {
+        let (px, py) = (cx + n.x * RADIO_MAPA, cy + n.y * RADIO_MAPA);
+        match n.dir {
+            Some((dx, dy)) => {
+                let (nx, ny) = (-dy, dx);
+                let flecha = |largo: f32, ancho: f32| {
+                    [
+                        (px + dx * largo, py + dy * largo),
+                        (px - dx * largo * 0.6 + nx * ancho, py - dy * largo * 0.6 + ny * ancho),
+                        (px - dx * largo * 0.6 - nx * ancho, py - dy * largo * 0.6 - ny * ancho),
+                    ]
+                };
+                triangulo(b, flecha(9., 5.5), BLANCO);
+                triangulo(b, flecha(7., 3.8), ROJO);
+            }
+            None => {
+                disco(b, px, py, 5., BLANCO);
+                disco(b, px, py, 3.4, ROJO);
             }
         }
     }
-    let (ox, oy) = (x as f32, y as f32);
-    for k in 1..=10 {
-        let ((sx, sy), _) = mapa.punto(hud.vuelta + k as f32 * 0.004);
-        disco(b, ox + sx, oy + sy, 1.8, Color::new(80, 170, 255, (240 - k * 20) as u8));
-    }
-    for &(t, color) in &hud.planetas_mapa {
-        let ((px, py), _) = mapa.punto(t);
-        disco(b, ox + px, oy + py, 4.6, Color::new(8, 12, 22, 230));
-        disco(b, ox + px, oy + py, 3.2, color);
-    }
-    let ((px, py), (dx, dy)) = mapa.punto(hud.vuelta);
-    let (nx, ny) = (-dy, dx);
-    let (cx, cy) = (ox + px, oy + py);
-    let flecha = |largo: f32, ancho: f32| {
-        [
-            (cx + dx * largo, cy + dy * largo),
-            (cx - dx * largo * 0.6 + nx * ancho, cy - dy * largo * 0.6 + ny * ancho),
-            (cx - dx * largo * 0.6 - nx * ancho, cy - dy * largo * 0.6 - ny * ancho),
-        ]
-    };
-    triangulo(b, flecha(11., 7.), BLANCO);
-    triangulo(b, flecha(9., 5.), ROJO);
-    texto_derecha(b, x + mapa.ancho, y + mapa.alto + 14, "MAPA ORBITAL", 1, APAGADO);
+    texto_derecha(b, x + LADO_MAPA, y + LADO_MAPA + 14, "MAPA ESTELAR", 1, APAGADO);
 }
 
 // Semicirculo de potencia: arco lleno hasta `frac`, marcas en los tres niveles y aguja.
@@ -666,13 +801,11 @@ fn instrumentos(b: &mut Band, hud: &Datos, ancho: i32, altura: i32) {
     cinta_altitud(b, hud, ancho - 130, altura - 190, 96, 150);
 }
 
-pub fn dibujar(b: &mut Band, hud: &Datos, mapa: Option<&Mapa>, altura: i32) {
+pub fn dibujar(b: &mut Band, hud: &Datos, altura: i32) {
     let ancho = b.width;
     lista_cercanos(b, hud, 28, 24);
     temporizador(b, hud, ancho / 2, 22);
-    if let Some(m) = mapa {
-        dibujar_mapa(b, hud, m, ancho - m.ancho - 36, 30);
-    }
+    dibujar_mapa(b, hud, ancho - LADO_MAPA - 36, 30);
     grupo_izquierdo(b, hud, altura);
     velocimetro(b, hud, ancho / 2, altura);
     instrumentos(b, hud, ancho, altura);
@@ -748,8 +881,31 @@ mod tests {
         assert_eq!(datos.cuerpo, "TERRA");
         assert!(datos.altitud > 0.);
         assert_eq!(datos.tiempo, "0:12.500");
-        // Mapa: un punto por cuerpo que orbita el origen (la Luna no cuenta).
-        assert_eq!(datos.planetas_mapa.len(), sistema.planetas.len() - 1);
+        // Mapa: una marca por cuerpo (la Luna incluida), con el mas cercano resaltado.
+        assert_eq!(datos.cuerpos_mapa.len(), sistema.planetas.len());
+        assert_eq!(datos.cuerpos_mapa.iter().filter(|m| m.cercano).count(), 1);
+        assert!(datos.nave_mapa.is_some());
+        assert!(datos.orbitas_mapa.iter().all(|&r| r > 0. && r < 1.));
+    }
+
+    #[test]
+    fn map_compresses_distance_and_keeps_bearing() {
+        let alcance = 1000.;
+        let (cerca, lejos) = (proyectar_mapa((100., 0.), alcance), proyectar_mapa((900., 0.), alcance));
+        assert!(cerca.0 > 0. && cerca.0 < lejos.0 && lejos.0 < 1.);
+        let fuera = proyectar_mapa((0., 5000.), alcance);
+        assert!((fuera.1 - 1.).abs() < 1e-5 && fuera.0.abs() < 1e-5);
+        assert_eq!(proyectar_mapa((0., 0.), alcance), (0., 0.));
+    }
+
+    #[test]
+    fn map_heading_follows_radial_and_tangential_motion() {
+        let pos = (400., 0.);
+        let radial = direccion_en_mapa(pos, (1., 0.), 1000.).unwrap();
+        assert!((radial.0 - 1.).abs() < 1e-5 && radial.1.abs() < 1e-5);
+        let tangencial = direccion_en_mapa(pos, (0., -1.), 1000.).unwrap();
+        assert!(tangencial.0.abs() < 1e-5 && (tangencial.1 + 1.).abs() < 1e-5);
+        assert!(direccion_en_mapa(pos, (0., 0.), 1000.).is_none());
     }
 
     #[test]

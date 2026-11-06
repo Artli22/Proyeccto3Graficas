@@ -5,7 +5,6 @@ const SUBIDA: f32 = 6.;
 const BAJADA: f32 = 4.; 
 const RETRASO_FRENADO: f32 = 0.5;
 const VOLUMEN_FRENADO: f32 = 0.8;
-/// Tamano del buffer de los streams de audio, en frames (~0.37 s a 44.1 kHz).
 const BUFFER_STREAM: i32 = 16384;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
