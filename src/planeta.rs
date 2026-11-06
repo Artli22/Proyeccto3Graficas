@@ -1,4 +1,5 @@
 
+use crate::modelo_planeta;
 use crate::pipeline::{Mat4, Uniforms, FAR, NEAR};
 use crate::sol::{Sol, RADIO_SOL};
 use cohete::color::Relleno;
@@ -18,6 +19,13 @@ pub enum Aspecto {
         b: [f32; 3],
         frecuencia: f32,
         turbulencia: f32,
+    },
+    /// Cuerpo cargado desde `src/assets/<archivo>`; `nucleo` es el objeto del OBJ cuya esfera
+    /// se escala al radio del cuerpo y `color` representa al cuerpo en el HUD.
+    Modelo {
+        archivo: &'static str,
+        nucleo: &'static str,
+        color: [f32; 3],
     },
 }
 
@@ -104,7 +112,8 @@ impl Aspecto {
         let c = match *self {
             Aspecto::Tierra => [40., 110., 190.],
             Aspecto::Rocoso { oscuro, claro, .. } => mezcla(oscuro, claro, 0.5),
-            Aspecto::Bandas { a, b, .. } => mezcla(a, b, 0.5),
+        Aspecto::Bandas { a, b, .. } => mezcla(a, b, 0.5),
+            Aspecto::Modelo { color, .. } => color,
         };
         Color::new(c[0] as u8, c[1] as u8, c[2] as u8, 255)
     }
@@ -157,6 +166,7 @@ fn color_triangulo(aspecto: Aspecto, n: f32, dir: Vector3, variacion: f32) -> Co
             let fase = dir.y * frecuencia + (n - 0.5) * turbulencia * std::f32::consts::TAU;
             mezcla(a, b, 0.5 + 0.5 * fase.sin())
         }
+        Aspecto::Modelo { color, .. } => color,
     };
     a_color(base, variacion)
 }
@@ -167,7 +177,7 @@ fn radio_en(config: &PlanetaConfig, n: f32) -> f32 {
             config.radio * (1. + config.relieve * (n.max(NIVEL_MAR) - NIVEL_MAR) * 2.)
         }
         Aspecto::Rocoso { .. } => config.radio * (1. + config.relieve * (n - 0.5) * 2.),
-        Aspecto::Bandas { .. } => config.radio,
+        Aspecto::Bandas { .. } | Aspecto::Modelo { .. } => config.radio,
     }
 }
 
@@ -398,27 +408,40 @@ pub struct Planeta {
 
 impl Planeta {
     pub fn nuevo(config: PlanetaConfig, centro_padre: Vector3) -> Self {
-        let mut niveles: Vec<u32> = Vec::new();
-        for nivel in [
-            config.subdivisiones,
-            config.subdivisiones.min(3),
-            config.subdivisiones.min(2),
-        ] {
-            if niveles.last() != Some(&nivel) {
-                niveles.push(nivel);
-            }
-        }
         let relieve = match config.aspecto {
-            Aspecto::Bandas { .. } => 0.,
+            Aspecto::Bandas { .. } | Aspecto::Modelo { .. } => 0.,
             _ => config.relieve,
         };
         let anillo_max = config.anillo.map_or(1., |(_, exterior)| exterior);
+        let (mallas, radio_limite) = match config.aspecto {
+            Aspecto::Modelo {
+                archivo,
+                nucleo,
+                color,
+            } => Self::mallas_modelo(&config, archivo, nucleo, color),
+            _ => {
+                let mut niveles: Vec<u32> = Vec::new();
+                for nivel in [
+                    config.subdivisiones,
+                    config.subdivisiones.min(3),
+                    config.subdivisiones.min(2),
+                ] {
+                    if niveles.last() != Some(&nivel) {
+                        niveles.push(nivel);
+                    }
+                }
+                (
+                    niveles
+                        .iter()
+                        .map(|&n| construir_malla(&config, n))
+                        .collect(),
+                    config.radio * (1. + relieve).max(anillo_max),
+                )
+            }
+        };
         let mut planeta = Self {
             config,
-            mallas: niveles
-                .iter()
-                .map(|&n| construir_malla(&config, n))
-                .collect(),
+            mallas,
             anillo: config
                 .anillo
                 .map(|(i, e)| construir_anillo(&config, i, e)),
@@ -426,10 +449,45 @@ impl Planeta {
             delta: Vector3::zero(),
             angulo_rotacion: 0.,
             angulo_orbita: config.orbita_inicial,
-            radio_limite: config.radio * (1. + relieve).max(anillo_max),
+            radio_limite,
         };
         planeta.centro = centro_padre + planeta.posicion_orbital();
         planeta
+    }
+
+    /// Detalle completo, tres niveles simplificados y una esfera de baja resolucion para cuando
+    /// se ve muy pequeno.
+    /// Si el OBJ no puede leerse se usa una esfera lisa y el cuerpo sigue siendo jugable.
+    fn mallas_modelo(
+        config: &PlanetaConfig,
+        archivo: &str,
+        nucleo: &str,
+        color: [f32; 3],
+    ) -> (Vec<Malla>, f32) {
+        let ruta = format!("{}/src/assets/{archivo}", env!("CARGO_MANIFEST_DIR"));
+        match modelo_planeta::cargar(&ruta, nucleo, config.radio) {
+            Ok((malla, extension)) => {
+                let extension = extension.max(config.radio);
+                let lejana = malla_esfera(config.radio, 2, modelo_planeta::color_medio(&malla));
+                let mut mallas: Vec<Malla> = [64, 32, 14]
+                    .map(|celdas| modelo_planeta::simplificar(&malla, extension, celdas))
+                    .into();
+                mallas.insert(0, malla);
+                mallas.push(lejana);
+                (mallas, extension)
+            }
+            Err(e) => {
+                eprintln!("No se pudo cargar {archivo}: {e}");
+                let esfera = malla_esfera(config.radio, 3, a_color(color, 0.5));
+                (vec![esfera], config.radio)
+            }
+        }
+    }
+
+    /// Las mallas cerradas permiten descartar caras traseras; las de los OBJ (anillos, puas)
+    /// pueden ser laminas y se dibujan por ambos lados.
+    pub fn malla_cerrada(&self) -> bool {
+        !matches!(self.config.aspecto, Aspecto::Modelo { .. })
     }
 
     /// Distancia del centro a la superficie en la direccion local `dir` (unitaria).
@@ -517,6 +575,17 @@ impl Planeta {
 
     /// Malla segun el tamano aparente: menos triangulos cuanto mas pequeno se ve.
     pub fn malla_lod(&self, radio_px: f32) -> &Malla {
+        if matches!(self.config.aspecto, Aspecto::Modelo { .. }) {
+            // Decenas de miles de triangulos: el nivel baja con el tamano aparente del nucleo.
+            let nivel = match radio_px {
+                r if r >= 250. => 0,
+                r if r >= 90. => 1,
+                r if r >= 35. => 2,
+                r if r >= 12. => 3,
+                _ => 4,
+            };
+            return &self.mallas[nivel.min(self.mallas.len() - 1)];
+        }
         let nivel = if radio_px >= 120. {
             0
         } else if radio_px >= 35. {
@@ -694,6 +763,38 @@ impl SistemaPlanetario {
                 aspecto: rocoso([118., 84., 62.], [236., 216., 196.], false),
                 ..base
             },
+            PlanetaConfig {
+                nombre: "MOGO",
+                radio: 350.,
+                semilla: 131,
+                orbita_radio: 23500.,
+                orbita_inicial: 0.6,
+                orbita_velocidad: 0.0002,
+                rotacion_velocidad: 0.03,
+                inclinacion: 0.3,
+                aspecto: Aspecto::Modelo {
+                    archivo: "Mogo.obj",
+                    nucleo: "Planeta",
+                    color: [110., 60., 170.],
+                },
+                ..base
+            },
+            PlanetaConfig {
+                nombre: "UNICRON",
+                radio: 800.,
+                semilla: 149,
+                orbita_radio: 28500.,
+                orbita_inicial: 3.9,
+                orbita_velocidad: 0.00015,
+                rotacion_velocidad: 0.02,
+                inclinacion: 0.2,
+                aspecto: Aspecto::Modelo {
+                    archivo: "Unicron.obj",
+                    nucleo: "Esfera_nucleo",
+                    color: [212., 170., 52.],
+                },
+                ..base
+            },
         ];
         let mut planetas: Vec<Planeta> = Vec::new();
         for config in configs {
@@ -827,10 +928,28 @@ mod tests {
     }
 
     #[test]
+    fn obj_bodies_are_in_the_system_with_core_collision_radius_and_gravity() {
+        let s = SistemaPlanetario::nuevo();
+        for nombre in ["MOGO", "UNICRON"] {
+            let p = &s.planetas[s.indice(nombre).unwrap()];
+            assert!(p.mallas[0].triangulos.len() > 10_000, "{nombre} debe usar el OBJ");
+            assert!(!p.malla_cerrada());
+            assert!(p.radio_limite > p.config.radio);
+            let dir = Vector3::new(0., 1., 0.);
+            assert!((p.radio_superficie(dir) - p.config.radio).abs() < 1e-3);
+            assert!(p.malla_lod(500.).triangulos.len() > p.malla_lod(2.).triangulos.len());
+            let conteos: Vec<usize> = p.mallas.iter().map(|m| m.triangulos.len()).collect();
+            assert!(conteos.windows(2).all(|w| w[0] > w[1]), "{nombre}: {conteos:?}");
+        }
+        let g = |n: &str| s.planetas[s.indice(n).unwrap()].gravedad_superficie();
+        assert!(g("UNICRON") > g("MOGO") && g("MOGO") > g("TERRA"));
+    }
+
+    #[test]
     fn system_has_requested_bodies_and_scales() {
         let s = SistemaPlanetario::nuevo();
         let radio = |n: &str| s.planetas[s.indice(n).unwrap()].config.radio;
-        assert_eq!(s.planetas.len(), 10);
+        assert_eq!(s.planetas.len(), 12);
         assert!(radio("MERCURIO") < radio("MARTE") && radio("PLUTON") < radio("MERCURIO"));
         assert!((radio("LUNA") / radio("TERRA") - 0.2727).abs() < 1e-3);
         let luna = &s.planetas[s.indice("LUNA").unwrap()];

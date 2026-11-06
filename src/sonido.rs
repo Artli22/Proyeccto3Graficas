@@ -5,6 +5,8 @@ const SUBIDA: f32 = 6.;
 const BAJADA: f32 = 4.; 
 const RETRASO_FRENADO: f32 = 0.5;
 const VOLUMEN_FRENADO: f32 = 0.8;
+/// Tamano del buffer de los streams de audio, en frames (~0.37 s a 44.1 kHz).
+const BUFFER_STREAM: i32 = 16384;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum AccionFrenado {
@@ -103,6 +105,9 @@ pub struct SonidoNave<'a> {
 
 impl<'a> SonidoNave<'a> {
     pub fn cargar(audio: &'a RaylibAudio) -> Option<Self> {
+        // Un buffer mayor tolera cuadros lentos sin que el stream se quede sin datos (crujidos).
+        // Debe fijarse antes de crear los streams.
+        audio.set_audio_stream_buffer_size_default(BUFFER_STREAM);
         let carpeta = concat!(env!("CARGO_MANIFEST_DIR"), "/src/assets/soundeffects/");
         let ruta_frenado = format!("{carpeta}bajandoVelocidad.mp3");
         let frenado = match audio.new_sound(&ruta_frenado) {

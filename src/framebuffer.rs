@@ -108,6 +108,8 @@ impl Band<'_> {
 }
 
 const FILAS_POR_FRANJA: usize = 16;
+/// Alto en filas de cada franja; el renderizador lo usa para repartir triangulos por franja.
+pub const ALTO_FRANJA: i32 = FILAS_POR_FRANJA as i32;
 
 impl Framebuffer {
     pub fn new(rl: &mut RaylibHandle, thread: &RaylibThread, width: i32, height: i32) -> Self {

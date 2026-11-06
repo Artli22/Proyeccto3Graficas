@@ -162,16 +162,34 @@ fn interpolate(a: VertexOut, b: VertexOut, t: f32) -> VertexOut {
 }
 /// Sutherland-Hodgman contra los seis planos ANTES de dividir por w.
 pub fn clip_triangle(triangle: [VertexOut; 3]) -> Vec<[VertexOut; 3]> {
+    let mut salida = Vec::new();
+    clip_triangle_into(triangle, &mut salida);
+    salida
+}
+
+/// Igual que `clip_triangle` pero agrega a `salida`. Los triangulos totalmente dentro o
+/// totalmente fuera de un plano se resuelven con mascaras de bits, sin asignar memoria: son
+/// casi todos los de una malla grande.
+pub fn clip_triangle_into(triangle: [VertexOut; 3], salida: &mut Vec<[VertexOut; 3]>) {
     if triangle
         .iter()
         .any(|v| v.clip.iter().any(|x| !x.is_finite()))
     {
-        return Vec::new();
+        return;
+    }
+    let mascara = |v: VertexOut| (0..6).fold(0u8, |m, p| m | (((distance(v, p) < 0.) as u8) << p));
+    let m = triangle.map(mascara);
+    if m[0] & m[1] & m[2] != 0 {
+        return;
+    }
+    if m[0] | m[1] | m[2] == 0 {
+        salida.push(triangle);
+        return;
     }
     let mut polygon = triangle.to_vec();
     for plane in 0..6 {
         if polygon.len() < 3 {
-            return Vec::new();
+            return;
         }
         let mut output = Vec::with_capacity(polygon.len() + 1);
         let mut previous = *polygon.last().unwrap();
@@ -190,11 +208,9 @@ pub fn clip_triangle(triangle: [VertexOut; 3]) -> Vec<[VertexOut; 3]> {
         }
         polygon = output;
     }
-    let mut result = Vec::new();
     for i in 1..polygon.len().saturating_sub(1) {
-        result.push([polygon[0], polygon[i], polygon[i + 1]]);
+        salida.push([polygon[0], polygon[i], polygon[i + 1]]);
     }
-    result
 }
 pub fn viewport(v: VertexOut, u: &Uniforms) -> ScreenVertex {
     let inverse = 1. / v.clip[3];
@@ -269,6 +285,19 @@ mod tests {
         assert!((v.screen.x - 800.).abs() < 1e-4);
         assert!((v.screen.y - 200.).abs() < 1e-4);
         assert!((v.screen.z - 4.).abs() < 1e-4);
+    }
+    #[test]
+    fn fast_paths_match_full_clipping() {
+        let dentro = [vertex(-0.2, -0.2, 0.), vertex(0.2, -0.2, 0.), vertex(0., 0.3, 0.)];
+        let mut salida = Vec::new();
+        clip_triangle_into(dentro, &mut salida);
+        assert_eq!(salida.len(), 1);
+        let fuera = dentro.map(|mut v| {
+            v.clip[0] += 5.;
+            v
+        });
+        clip_triangle_into(fuera, &mut salida);
+        assert_eq!(salida.len(), 1, "un triangulo fuera no agrega nada");
     }
     #[test]
     fn clipping_interpolates_attributes() {

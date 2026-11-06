@@ -7,6 +7,7 @@ mod hud;
 mod laser;
 mod luz;
 mod mapa;
+mod modelo_planeta;
 mod particle_renderer;
 mod pipeline;
 mod planeta;
@@ -89,6 +90,7 @@ fn agregar_malla<'a>(
     eye_local: Option<Vector3>,
     salida: &mut Vec<Visible<'a>>,
 ) {
+    let mut recortados = Vec::with_capacity(4);
     for (i, (tri, relleno)) in malla.triangulos.iter().zip(&malla.rellenos).enumerate() {
         if let Some(eye_local) = eye_local {
             if malla.normales[i].dot(eye_local - tri[0]) <= 0. {
@@ -98,16 +100,22 @@ fn agregar_malla<'a>(
         let transformed = std::array::from_fn::<_, 3, _>(|k| {
             pipeline::vertex_shader(tri[k], Vector2::zero(), uniforms)
         });
+        // El recorte descarta primero lo que queda fuera de la vista: lo mas barato va antes.
+        pipeline::clip_triangle_into(transformed, &mut recortados);
+        if recortados.is_empty() {
+            continue;
+        }
         let p = transformed.map(|v| v.world);
         let normal = (p[1] - p[0]).cross(p[2] - p[0]);
         if normal.length() < 1e-9 {
+            recortados.clear();
             continue;
         }
         let shader = ShaderParams {
             normal: normal.normalized(),
             ..plantilla
         };
-        for clipped in pipeline::clip_triangle(transformed) {
+        for clipped in recortados.drain(..) {
             salida.push((clipped.map(|v| pipeline::viewport(v, uniforms)), relleno, shader));
         }
     }
@@ -203,8 +211,10 @@ fn render(
         };
         let mut uniforms = *matrices;
         uniforms.model = planeta.matriz_modelo();
-        let eye = planeta.a_local(camera.position - planeta.centro);
-        agregar_malla(planeta.malla_lod(radio_px), &uniforms, base, Some(eye), &mut opacos);
+        let eye = planeta
+            .malla_cerrada()
+            .then(|| planeta.a_local(camera.position - planeta.centro));
+        agregar_malla(planeta.malla_lod(radio_px), &uniforms, base, eye, &mut opacos);
         if let Some(anillo) = &planeta.anillo {
             agregar_malla(anillo, &uniforms, base, None, &mut opacos);
         }
@@ -229,13 +239,37 @@ fn render(
         )
     });
 
-    // Cada hilo dibuja una franja: primero el modelo, luego el láser y la nube del propulsor
+    // Cada hilo dibuja una franja: primero el modelo, luego el laser y la nube del propulsor.
+    // Los triangulos se reparten por franja una sola vez para que cada hilo solo recorra los
+    // que tocan sus filas (conservando el orden: opacos y luego translucidos).
     let fondo = estrellas.preparar(matrices, camera.position, model.size.max(1.));
     let logo = fondo_rosa.preparar(matrices, camera.position, model.size.max(1.));
+    let triangulos: Vec<&Visible> = opacos.iter().chain(translucidos.iter()).collect();
+    let franjas = (SCREEN_HEIGHT + framebuffer::ALTO_FRANJA - 1) / framebuffer::ALTO_FRANJA;
+    let mut por_franja: Vec<Vec<u32>> = vec![Vec::new(); franjas as usize];
+    for (i, (pantalla, _, _)) in triangulos.iter().enumerate() {
+        let (mut min_y, mut max_y) = (f32::MAX, f32::MIN);
+        for v in pantalla {
+            min_y = min_y.min(v.screen.y);
+            max_y = max_y.max(v.screen.y);
+        }
+        if !(min_y.is_finite() && max_y.is_finite()) {
+            continue;
+        }
+        let primera = ((min_y.floor() as i32).max(0) / framebuffer::ALTO_FRANJA).min(franjas - 1);
+        let ultima = ((max_y.ceil() as i32).max(0) / framebuffer::ALTO_FRANJA).min(franjas - 1);
+        if max_y < 0. || min_y >= SCREEN_HEIGHT as f32 {
+            continue;
+        }
+        for f in primera..=ultima {
+            por_franja[f as usize].push(i as u32);
+        }
+    }
     framebuffer.render_parallel(|franja| {
         estrellas::dibujar(&fondo, franja);
         fondo_rosa.dibujar(franja, &logo, camera.position);
-        for (pantalla, relleno, shader) in opacos.iter().chain(translucidos.iter()) {
+        for &i in &por_franja[(franja.y0 / framebuffer::ALTO_FRANJA) as usize] {
+            let (pantalla, relleno, shader) = triangulos[i as usize];
             triangle(franja, *pantalla, relleno, *shader);
         }
         if let Some(haz) = &haz {
