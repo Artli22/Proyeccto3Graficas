@@ -1,4 +1,4 @@
-
+﻿
 use crate::modelo_planeta;
 use crate::pipeline::{Mat4, Uniforms, FAR, NEAR};
 use crate::sol::{Sol, RADIO_SOL};
@@ -606,6 +606,9 @@ pub struct SistemaPlanetario {
 }
 
 const RADIO_TIERRA: f32 = 150.;
+/// Multiplica la velocidad angular de las orbitas alrededor del sol (las lunas no) para que el
+/// traslado se note a simple vista; conserva las proporciones entre planetas.
+const ACELERACION_ORBITAL: f32 = 6.;
 
 impl SistemaPlanetario {
     pub fn nuevo() -> Self {
@@ -643,7 +646,7 @@ impl SistemaPlanetario {
                 nombre: "MERCURIO",
                 radio: 20.,
                 semilla: 11,
-                orbita_radio: 1500.,
+                orbita_radio: 1000.,
                 orbita_inicial: 0.8,
                 orbita_velocidad: 0.0133,
                 subdivisiones: 3,
@@ -655,7 +658,7 @@ impl SistemaPlanetario {
                 nombre: "VENUS",
                 radio: 140.,
                 semilla: 23,
-                orbita_radio: 2500.,
+                orbita_radio: 1600.,
                 orbita_inicial: 2.4,
                 orbita_velocidad: 0.0072,
                 inclinacion: 3.09,
@@ -666,7 +669,7 @@ impl SistemaPlanetario {
                 nombre: "TERRA",
                 radio: RADIO_TIERRA,
                 semilla: 42,
-                orbita_radio: 3600.,
+                orbita_radio: 2300.,
                 orbita_inicial: -FRAC_PI_2, // frente a la nave al iniciar
                 orbita_velocidad: 0.0042,
                 rotacion_velocidad: 0.05,
@@ -680,10 +683,10 @@ impl SistemaPlanetario {
                 radio: RADIO_TIERRA * 0.2727,
                 semilla: 57,
                 padre: Some(2),
-                orbita_radio: 1100.,
+                orbita_radio: 600.,
                 orbita_inicial: -FRAC_PI_2 + 0.5, // visible desde el punto de aparicion de la nave
-                orbita_velocidad: 0.04,
-                rotacion_velocidad: 0.04, // rotacion sincrona: siempre muestra la misma cara
+                orbita_velocidad: 0.08, // ~80 s por vuelta: mas rapida que la Tierra (~4 min) sin ser brusca
+                rotacion_velocidad: 0.08, // rotacion sincrona: siempre muestra la misma cara
                 relieve: 0.08,
                 aspecto: rocoso([88., 88., 92.], [196., 196., 200.], false),
                 ..base
@@ -692,7 +695,7 @@ impl SistemaPlanetario {
                 nombre: "MARTE",
                 radio: 80.,
                 semilla: 71,
-                orbita_radio: 4800.,
+                orbita_radio: 3000.,
                 orbita_inicial: 4.0,
                 orbita_velocidad: 0.0027,
                 inclinacion: 0.44,
@@ -704,8 +707,8 @@ impl SistemaPlanetario {
                 nombre: "JUPITER",
                 radio: 600.,
                 semilla: 83,
-                orbita_radio: 7500.,
-                orbita_inicial: 5.5,
+                orbita_radio: 5200.,
+                orbita_inicial: 2.2, // lado opuesto a la Tierra al iniciar
                 orbita_velocidad: 0.0013,
                 rotacion_velocidad: 0.03,
                 inclinacion: 0.05,
@@ -717,7 +720,7 @@ impl SistemaPlanetario {
                 nombre: "SATURNO",
                 radio: 520.,
                 semilla: 97,
-                orbita_radio: 10500.,
+                orbita_radio: 7200.,
                 orbita_inicial: 1.2,
                 orbita_velocidad: 0.00076,
                 rotacion_velocidad: 0.03,
@@ -731,7 +734,7 @@ impl SistemaPlanetario {
                 nombre: "URANO",
                 radio: 300.,
                 semilla: 101,
-                orbita_radio: 13500.,
+                orbita_radio: 9000.,
                 orbita_inicial: 3.3,
                 orbita_velocidad: 0.00052,
                 inclinacion: 1.7,
@@ -742,7 +745,7 @@ impl SistemaPlanetario {
                 nombre: "NEPTUNO",
                 radio: 290.,
                 semilla: 113,
-                orbita_radio: 16500.,
+                orbita_radio: 10800.,
                 orbita_inicial: PI * 0.2,
                 orbita_velocidad: 0.00036,
                 inclinacion: 0.49,
@@ -753,7 +756,7 @@ impl SistemaPlanetario {
                 nombre: "PLUTON",
                 radio: 10.,
                 semilla: 127,
-                orbita_radio: 19500.,
+                orbita_radio: 12600.,
                 orbita_inicial: 4.7,
                 orbita_velocidad: 0.00026,
                 rotacion_velocidad: 0.02,
@@ -767,7 +770,7 @@ impl SistemaPlanetario {
                 nombre: "MOGO",
                 radio: 350.,
                 semilla: 131,
-                orbita_radio: 23500.,
+                orbita_radio: 14600.,
                 orbita_inicial: 0.6,
                 orbita_velocidad: 0.0002,
                 rotacion_velocidad: 0.03,
@@ -783,7 +786,7 @@ impl SistemaPlanetario {
                 nombre: "UNICRON",
                 radio: 800.,
                 semilla: 149,
-                orbita_radio: 28500.,
+                orbita_radio: 17200.,
                 orbita_inicial: 3.9,
                 orbita_velocidad: 0.00015,
                 rotacion_velocidad: 0.02,
@@ -797,7 +800,10 @@ impl SistemaPlanetario {
             },
         ];
         let mut planetas: Vec<Planeta> = Vec::new();
-        for config in configs {
+        for mut config in configs {
+            if config.padre.is_none() {
+                config.orbita_velocidad *= ACELERACION_ORBITAL;
+            }
             let centro_padre = config.padre.map_or(Vector3::zero(), |p| planetas[p].centro);
             planetas.push(Planeta::nuevo(config, centro_padre));
         }

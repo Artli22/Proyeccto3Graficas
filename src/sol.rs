@@ -61,9 +61,10 @@ pub fn color_estrella(world: Vector3, centro: Vector3, hacia_camara: Vector3, ti
     let calor = ((grande - 0.3) / 0.4 + (fino - 0.5) * 0.5).clamp(0., 1.);
     let base = mezcla([205., 60., 8.], [255., 238., 130.], calor);
     let mancha = if grande < 0.33 { 0.55 } else { 1. };
-    // El borde del disco se ve mas oscuro que el centro, y el brillo late ligeramente.
+    // El borde del disco se ve mas oscuro y mas rojizo que el centro, y el brillo late ligeramente.
     let limbo = dir.dot(hacia_camara).clamp(0., 1.);
-    let brillo = (0.55 + 0.45 * limbo.sqrt()) * (1. + 0.04 * (tiempo * 2.).sin()) * mancha;
+    let base = mezcla([185., 45., 5.], base, limbo.sqrt());
+    let brillo = (0.45 + 0.4 * limbo.sqrt()) * (1. + 0.03 * (tiempo * 2.).sin()) * mancha;
     let canal = |c: f32| (c * brillo).clamp(0., 255.) as u8;
     Color::new(canal(base[0]), canal(base[1]), canal(base[2]), 255)
 }

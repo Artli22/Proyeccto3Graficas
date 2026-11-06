@@ -10,6 +10,7 @@ mod modelo_planeta;
 mod particle_renderer;
 mod pipeline;
 mod planeta;
+mod resplandor;
 mod sol;
 mod sonido;
 mod thrust;
@@ -264,9 +265,13 @@ fn render(
             por_franja[f as usize].push(i as u32);
         }
     }
+    let resplandor = resplandor::Resplandor::preparar(matrices, sistema.sol.centro, sistema.sol.radio);
     framebuffer.render_parallel(|franja| {
         estrellas::dibujar(&fondo, franja);
         fondo_rosa.dibujar(franja, &logo, camera.position);
+        if let Some(r) = &resplandor {
+            r.dibujar(franja);
+        }
         for &i in &por_franja[(franja.y0 / framebuffer::ALTO_FRANJA) as usize] {
             let (pantalla, relleno, shader) = triangulos[i as usize];
             triangle(franja, *pantalla, relleno, *shader);
