@@ -55,7 +55,18 @@ pub fn fragment_shader(f: &Fragment, material: &Relleno, u: ShaderParams) -> Col
                 (light.difuso + diffuse * power * 0.6 / (1. + distance * distance * 0.05)).min(1.);
         }
     }
-    light.aplicar(color)
+    let iluminado = light.aplicar(color);
+    match material.resplandor() {
+        Some(resplandor) => aplicar_resplandor(iluminado, resplandor),
+        None => iluminado,
+    }
+}
+
+/// Mezcla "screen" del resplandor sobre el color ya iluminado: aclara sin saturar y deja que
+/// el lado diurno conserve su sombreado mientras el lado nocturno sigue brillando.
+fn aplicar_resplandor(c: Color, e: [f32; 3]) -> Color {
+    let canal = |v: u8, e: f32| (255. - (255. - v as f32) * (255. - e) / 255.).clamp(0., 255.) as u8;
+    Color::new(canal(c.r, e[0]), canal(c.g, e[1]), canal(c.b, e[2]), c.a)
 }
 
 #[cfg(test)]
@@ -103,6 +114,32 @@ mod tests {
         let iluminado = fragment_shader(&punto, &material, con(Vector3::new(1., 0., 0.)));
         let a_oscuras = fragment_shader(&punto, &material, con(Vector3::new(-1., 0., 0.)));
         assert!(brillo(iluminado) > brillo(a_oscuras));
+    }
+
+    #[test]
+    fn glowing_material_shines_on_the_dark_side_and_keeps_shading() {
+        let sol = Vector3::new(1000., 0., 0.);
+        let punto = Fragment {
+            world: Vector3::new(100., 0., 0.),
+            uv: Vector2::zero(),
+        };
+        let color = Color::new(70, 170, 110, 255);
+        let con = |normal: Vector3| ShaderParams {
+            normal,
+            eye: Vector3::new(100., 0., 500.),
+            engine_light: None,
+            unlit: false,
+            sol: Some(sol),
+            emisivo: None,
+        };
+        let luz = Vector3::new(1., 0., 0.);
+        let sombra = Vector3::new(-1., 0., 0.);
+        let normal = Relleno::Solido(color);
+        let brillante = Relleno::Brillante(color, [105., 225., 140.]);
+        let noche = fragment_shader(&punto, &brillante, con(sombra));
+        assert!(brillo(noche) > 2 * brillo(fragment_shader(&punto, &normal, con(sombra))));
+        assert!(noche.g > noche.r && noche.g > noche.b);
+        assert!(brillo(fragment_shader(&punto, &brillante, con(luz))) > brillo(noche));
     }
 
     #[test]

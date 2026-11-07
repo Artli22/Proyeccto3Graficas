@@ -54,6 +54,20 @@ fn color_paleta(material: &str) -> [u8; 3] {
         .map_or(COLOR_DEFECTO, |&(_, c)| c)
 }
 
+const RESPLANDOR_VERDE: [f32; 3] = [105., 225., 140.];
+const RESPLANDOR_DORADO: [f32; 3] = [255., 205., 80.];
+
+/// Resplandor propio de un material: verde para "Verde" (Mogo) y dorado para la familia
+/// "Oro", "Oro_claro" y "Oro_oscuro" (Unicron).
+fn resplandor_material(material: &str) -> Option<[f32; 3]> {
+    let base = material.split('.').next()?.to_lowercase();
+    match base.as_str() {
+        "verde" => Some(RESPLANDOR_VERDE),
+        "oro" | "oro_claro" | "oro_oscuro" => Some(RESPLANDOR_DORADO),
+        _ => None,
+    }
+}
+
 /// Carga `ruta` centrado en el centroide del objeto `nucleo` y escalado para que ese objeto
 /// (la esfera del cuerpo) tenga radio `radio`. Devuelve la malla y la distancia maxima al
 /// centro en unidades de mundo (para el descarte por frustum).
@@ -63,7 +77,7 @@ pub fn cargar(ruta: &str, nucleo: &str, radio: f32) -> std::io::Result<(Malla, f
     let mut objetos: Vec<(String, usize)> = Vec::new();
     let mut materiales: HashMap<String, [u8; 3]> = HashMap::new();
     let mut material = String::new();
-    let mut caras: Vec<(Vec<usize>, [u8; 3])> = Vec::new();
+    let mut caras: Vec<(Vec<usize>, [u8; 3], Option<[f32; 3]>)> = Vec::new();
 
     for linea in contenido.lines() {
         let partes: Vec<&str> = linea.split_whitespace().collect();
@@ -89,7 +103,7 @@ pub fn cargar(ruta: &str, nucleo: &str, radio: f32) -> std::io::Result<(Malla, f
                     .get(&material)
                     .copied()
                     .unwrap_or_else(|| color_paleta(&material));
-                caras.push((indices, color));
+                caras.push((indices, color, resplandor_material(&material)));
             }
             _ => {}
         }
@@ -121,7 +135,7 @@ pub fn cargar(ruta: &str, nucleo: &str, radio: f32) -> std::io::Result<(Malla, f
         normales: Vec::new(),
         rellenos: Vec::new(),
     };
-    for (indices, [r, g, b]) in caras {
+    for (indices, [r, g, b], resplandor) in caras {
         for i in 1..indices.len().saturating_sub(1) {
             let tri = [local[indices[0]], local[indices[i]], local[indices[i + 1]]];
             let normal = (tri[1] - tri[0]).cross(tri[2] - tri[0]);
@@ -130,7 +144,11 @@ pub fn cargar(ruta: &str, nucleo: &str, radio: f32) -> std::io::Result<(Malla, f
             }
             malla.triangulos.push(tri);
             malla.normales.push(normal.normalized());
-            malla.rellenos.push(Relleno::Solido(Color::new(r, g, b, 255)));
+            let color = Color::new(r, g, b, 255);
+            malla.rellenos.push(match resplandor {
+                Some(e) => Relleno::Brillante(color, e),
+                None => Relleno::Solido(color),
+            });
         }
     }
     Ok((malla, extension))
@@ -181,7 +199,7 @@ pub fn simplificar(malla: &Malla, extension: f32, celdas: u32) -> Malla {
 pub fn color_medio(malla: &Malla) -> Color {
     let mut suma = [0u64; 3];
     for r in &malla.rellenos {
-        if let Relleno::Solido(c) = r {
+        if let Relleno::Solido(c) | Relleno::Brillante(c, _) = r {
             suma[0] += c.r as u64;
             suma[1] += c.g as u64;
             suma[2] += c.b as u64;

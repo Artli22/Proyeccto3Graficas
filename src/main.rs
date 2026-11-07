@@ -395,7 +395,6 @@ fn main() {
             restos::Restos::vacio()
         })
     };
-    let mut tiempo = 0f32;
     let mut recorrido_km = 0f64;
     // El dispositivo de audio debe declararse antes que el sonido que lo usa.
     let audio = match RaylibAudio::init_audio_device() {
@@ -423,7 +422,6 @@ fn main() {
             camera = Camara::new(&nave, size);
             gestor = GestorAterrizaje::nuevo();
             restos.olvidar();
-            tiempo = 0.;
             thrust.apagar();
             laser.apagar();
             selected = None;
@@ -471,8 +469,7 @@ fn main() {
             }
         }
         let moving = avanzando && !gestor.posada();
-        tiempo += dt;
-        recorrido_km += nave.speed_kmh as f64 * dt as f64 / 3600.;
+        recorrido_km +=  nave.speed_kmh as f64 * dt as f64 / 3600.;
         let propulsor = if nave.laser_mode() {
             Propulsor::Laser
         } else {
@@ -541,7 +538,7 @@ fn main() {
         let mut datos = hud::Datos::new(&nave, selected_power, moving);
         datos.estado_vuelo = gestor.titulo();
         datos.posada = gestor.posada();
-        datos.con_sistema(&nave, &sistema, size * aterrizaje::HOLGURA, tiempo, recorrido_km);
+        datos.con_sistema(&nave, &sistema, size * aterrizaje::HOLGURA, recorrido_km);
         render(
             &mut framebuffer,
             &model,

@@ -5,6 +5,8 @@ pub const COLOR_POR_DEFECTO: Color = Color::new(0, 0, 0, 255);
 #[derive(Clone)]
 pub enum Relleno {
     Solido(Color),
+    /// Color solido que ademas emite un resplandor propio (RGB) que se suma a la iluminacion.
+    Brillante(Color, [f32; 3]),
     Textura {
         width: usize,
         height: usize,
@@ -15,7 +17,7 @@ pub enum Relleno {
 impl Relleno {
     pub fn color_en(&self, uv: Vector2) -> Color {
         match self {
-            Relleno::Solido(color) => *color,
+            Relleno::Solido(color) | Relleno::Brillante(color, _) => *color,
             Relleno::Textura {
                 width,
                 height,
@@ -65,8 +67,15 @@ impl Relleno {
 
     pub fn es_opaco(&self) -> bool {
         match self {
-            Relleno::Solido(color) => color.a == 255,
+            Relleno::Solido(color) | Relleno::Brillante(color, _) => color.a == 255,
             Relleno::Textura { .. } => false,
+        }
+    }
+
+    pub fn resplandor(&self) -> Option<[f32; 3]> {
+        match self {
+            Relleno::Brillante(_, resplandor) => Some(*resplandor),
+            _ => None,
         }
     }
 }

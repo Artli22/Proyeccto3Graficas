@@ -7,7 +7,7 @@ use cohete::color::Relleno;
 use raylib::prelude::{Color, Vector3};
 use std::fs;
 
-pub const ESCALA_RESTOS: f32 = 2.;
+pub const ESCALA_RESTOS: f32 = 1.5;
 
 const ELASTICIDAD_NAVE: f32 = 0.4;
 const ELASTICIDAD_RESTOS: f32 = 0.6;

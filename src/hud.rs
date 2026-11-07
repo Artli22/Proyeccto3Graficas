@@ -3,7 +3,7 @@ use crate::framebuffer::Band;
 use crate::planeta::SistemaPlanetario;
 use crate::vuelo::Nave;
 use raylib::prelude::{Color, Vector3};
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::TAU;
 
 const BLANCO: Color = Color::new(240, 244, 250, 255);
 const APAGADO: Color = Color::new(142, 164, 178, 255);
@@ -32,10 +32,8 @@ pub struct Datos {
     ratio: f32,
     laser: bool,
     active: bool,
-    potencia: f32,
     pub estado_vuelo: &'static str,
     pub posada: bool,
-    tiempo: String,
     odometro: String,
     cercanos: Vec<Cercano>,
     altitud: f32,
@@ -116,11 +114,6 @@ fn miles(n: u32) -> String {
     }
 }
 
-fn tiempo_texto(segundos: f32) -> String {
-    let ms = (segundos.max(0.) * 1000.).round() as u64;
-    format!("{}:{:02}.{:03}", ms / 60_000, (ms / 1000) % 60, ms % 1000)
-}
-
 fn odometro_texto(km: f64) -> String {
     let decimas = (km.max(0.) * 10.).round() as u64;
     let enteros = decimas / 10;
@@ -181,10 +174,8 @@ impl Datos {
             ratio: nave.speed_kmh / Nave::MAX_SPEED_KMH,
             laser: nave.laser_mode(),
             active,
-            potencia: power,
             estado_vuelo: "VUELO LIBRE",
             posada: false,
-            tiempo: tiempo_texto(0.),
             odometro: odometro_texto(0.),
             cercanos: Vec::new(),
             altitud: 0.,
@@ -260,10 +251,8 @@ impl Datos {
         nave: &Nave,
         sistema: &SistemaPlanetario,
         holgura: f32,
-        tiempo: f32,
         recorrido_km: f64,
     ) {
-        self.tiempo = tiempo_texto(tiempo);
         self.odometro = odometro_texto(recorrido_km);
         // Cada cuerpo (el sol incluido): nombre, color, altitud en metros y direccion desde su centro.
         let mut medidas: Vec<(&'static str, Color, f32, Vector3)> = sistema
@@ -327,26 +316,6 @@ fn borde(b: &mut Band, x: i32, y: i32, w: i32, h: i32, c: Color) {
     rect(b, x, y + h - 1, w, 1, c);
     rect(b, x, y, 1, h, c);
     rect(b, x + w - 1, y, 1, h, c);
-}
-
-fn linea(b: &mut Band, x0: f32, y0: f32, x1: f32, y1: f32, grosor: i32, c: Color) {
-    let (min_y, max_y) = (y0.min(y1) as i32 - grosor, y0.max(y1) as i32 + grosor);
-    if max_y < b.y0 || min_y >= b.y1 {
-        return;
-    }
-    let pasos = (x1 - x0).abs().max((y1 - y0).abs()).ceil().max(1.) as i32;
-    for k in 0..=pasos {
-        let t = k as f32 / pasos as f32;
-        let (x, y) = (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
-        rect(
-            b,
-            x.round() as i32 - grosor / 2,
-            y.round() as i32 - grosor / 2,
-            grosor,
-            grosor,
-            c,
-        );
-    }
 }
 
 fn disco(b: &mut Band, cx: f32, cy: f32, r: f32, c: Color) {
@@ -509,15 +478,6 @@ fn lista_cercanos(b: &mut Band, hud: &Datos, x: i32, y: i32) {
     }
 }
 
-fn temporizador(b: &mut Band, hud: &Datos, cx: i32, y: i32) {
-    if b.y1 <= y || b.y0 >= y + 30 {
-        return;
-    }
-    rect(b, cx - 85, y, 170, 30, FONDO);
-    borde(b, cx - 85, y, 170, 30, BORDE);
-    texto_centrado(b, cx, y + 8, &hud.tiempo, 2, BLANCO);
-}
-
 fn dibujar_mapa(b: &mut Band, hud: &Datos, x: i32, y: i32) {
     if b.y1 <= y - 8 || b.y0 >= y + LADO_MAPA + 30 {
         return;
@@ -576,50 +536,6 @@ fn dibujar_mapa(b: &mut Band, hud: &Datos, x: i32, y: i32) {
     texto_derecha(b, x + LADO_MAPA, y + LADO_MAPA + 14, "MAPA ESTELAR", 1, APAGADO);
 }
 
-// Semicirculo de potencia: arco lleno hasta `frac`, marcas en los tres niveles y aguja.
-fn medidor(b: &mut Band, cx: i32, cy: i32, r: i32, frac: f32, color: Color) {
-    if b.y1 <= cy - r - 10 || b.y0 >= cy + 20 {
-        return;
-    }
-    let apagado = Color::new(40, 52, 72, 255);
-    for y in (cy - r - 2).max(b.y0)..=(cy + 1).min(b.y1 - 1) {
-        for x in cx - r - 2..=cx + r + 2 {
-            let (dx, dy) = ((x - cx) as f32, (cy - y) as f32);
-            let d = (dx * dx + dy * dy).sqrt();
-            if d > r as f32 + 0.5 || d < r as f32 - 5. {
-                continue;
-            }
-            let f = 1. - dy.max(0.).atan2(dx) / PI;
-            b.overlay_pixel(x, y, if f <= frac { color } else { apagado });
-        }
-    }
-    for nivel in [0.3_f32, 0.6, 1.0] {
-        let a = PI * (1. - nivel);
-        let (ca, sa) = (a.cos(), a.sin());
-        let r = r as f32;
-        linea(
-            b,
-            cx as f32 + ca * (r + 2.),
-            cy as f32 - sa * (r + 2.),
-            cx as f32 + ca * (r + 7.),
-            cy as f32 - sa * (r + 7.),
-            2,
-            BLANCO,
-        );
-    }
-    let a = PI * (1. - frac.clamp(0., 1.));
-    linea(
-        b,
-        cx as f32,
-        cy as f32,
-        cx as f32 + a.cos() * (r - 8) as f32,
-        cy as f32 - a.sin() * (r - 8) as f32,
-        2,
-        BLANCO,
-    );
-    disco(b, cx as f32, cy as f32, 3.5, BLANCO);
-}
-
 fn indicador(b: &mut Band, cx: i32, cy: i32, etiqueta: &str, encendido: bool, color: Color) {
     if b.y1 <= cy - 16 || b.y0 >= cy + 16 {
         return;
@@ -638,19 +554,14 @@ fn grupo_izquierdo(b: &mut Band, hud: &Datos, altura: i32) {
     if b.y1 <= altura - 130 {
         return;
     }
-    let (cx, cy, r) = (84, altura - 62, 42);
-    let color = if hud.laser { CIAN } else { NARANJA };
-    medidor(b, cx, cy, r, hud.potencia, color);
-    texto_centrado(b, cx, cy + 8, &format!("{}%", (hud.potencia * 100.).round() as u32), 1, BLANCO);
-    text(b, cx - r - 2, cy + 8, "0", 1, APAGADO);
-    texto_derecha(b, cx + r + 4, cy + 8, "MAX", 1, APAGADO);
     text(b, 28, altura - 30, &hud.odometro, 2, BLANCO);
     text(b, 28 + ancho_texto(&hud.odometro, 2) + 8, altura - 24, "KM", 1, APAGADO);
+    // Los indicadores ocupan el lugar del antiguo medidor de potencia.
     let activo = hud.active;
-    indicador(b, 172, altura - 96, "NRM", activo && !hud.laser, NARANJA);
-    indicador(b, 208, altura - 96, "LSR", activo && hud.laser, CIAN);
-    indicador(b, 172, altura - 60, "AST", hud.estado_vuelo == "APROXIMANDO", AMARILLO);
-    indicador(b, 208, altura - 60, "LND", hud.posada, VERDE);
+    indicador(b, 64, altura - 98, "NRM", activo && !hud.laser, NARANJA);
+    indicador(b, 104, altura - 98, "LSR", activo && hud.laser, CIAN);
+    indicador(b, 64, altura - 58, "AST", hud.estado_vuelo == "APROXIMANDO", AMARILLO);
+    indicador(b, 104, altura - 58, "LND", hud.posada, VERDE);
 }
 
 fn velocimetro(b: &mut Band, hud: &Datos, cx: i32, altura: i32) {
@@ -794,7 +705,6 @@ fn instrumentos(b: &mut Band, hud: &Datos, ancho: i32, altura: i32) {
 pub fn dibujar(b: &mut Band, hud: &Datos, altura: i32) {
     let ancho = b.width;
     lista_cercanos(b, hud, 28, 24);
-    temporizador(b, hud, ancho / 2, 22);
     dibujar_mapa(b, hud, ancho - LADO_MAPA - 36, 30);
     grupo_izquierdo(b, hud, altura);
     velocimetro(b, hud, ancho / 2, altura);
@@ -819,9 +729,7 @@ mod tests {
     }
 
     #[test]
-    fn clock_and_odometer_formats() {
-        assert_eq!(tiempo_texto(26.666), "0:26.666");
-        assert_eq!(tiempo_texto(125.5), "2:05.500");
+    fn odometer_format() {
         assert_eq!(odometro_texto(31_884.1), "031,884.1");
         assert_eq!(odometro_texto(0.), "000,000.0");
     }
@@ -865,12 +773,11 @@ mod tests {
         let mut nave = Nave::new();
         nave.position = tierra.centro + Vector3::new(0., 90., 450.);
         let mut datos = Datos::new(&nave, 0.6, false);
-        datos.con_sistema(&nave, &sistema, 2.6, 12.5, 100.);
+        datos.con_sistema(&nave, &sistema, 2.6, 100.);
         assert_eq!(datos.cercanos.len(), 5);
         assert_eq!(datos.cercanos[0].nombre, "TERRA");
         assert_eq!(datos.cuerpo, "TERRA");
         assert!(datos.altitud > 0.);
-        assert_eq!(datos.tiempo, "0:12.500");
         // Mapa: una marca por cuerpo (la Luna incluida), con el mas cercano resaltado.
         assert_eq!(datos.cuerpos_mapa.len(), sistema.planetas.len());
         assert_eq!(datos.cuerpos_mapa.iter().filter(|m| m.cercano).count(), 1);
@@ -907,7 +814,7 @@ mod tests {
         let mut nave = Nave::new();
         nave.position = p.centro + dir * (p.radio_superficie(p.a_local(dir)) + holgura);
         let mut datos = Datos::new(&nave, 0.6, false);
-        datos.con_sistema(&nave, &sistema, holgura, 0., 0.);
+        datos.con_sistema(&nave, &sistema, holgura, 0.);
         assert!(datos.altitud < 1.0);
     }
 }
