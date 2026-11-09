@@ -37,6 +37,7 @@ pub struct Datos {
     pub estado_vuelo: &'static str,
     pub posada: bool,
     pub vision_ultra_roja: bool,
+    pub blanco_negro: bool,
     odometro: String,
     cercanos: Vec<Cercano>,
     altitud: f32,
@@ -181,6 +182,7 @@ impl Datos {
             estado_vuelo: "VUELO LIBRE",
             posada: false,
             vision_ultra_roja: false,
+            blanco_negro: false,
             odometro: odometro_texto(0.),
             cercanos: Vec::new(),
             altitud: 0.,
@@ -636,7 +638,8 @@ fn grupo_izquierdo(b: &mut Band, hud: &Datos, altura: i32) {
     indicador(b, 208, altura - 96, "LSR", activo && hud.laser, CIAN);
     indicador(b, 172, altura - 60, "AST", hud.estado_vuelo == "APROXIMANDO", AMARILLO);
     indicador(b, 208, altura - 60, "LND", hud.posada, VERDE);
-    indicador(b, 244, altura - 78, "UR", hud.vision_ultra_roja, ROJO_UR);
+    indicador(b, 244, altura - 96, "UR", hud.vision_ultra_roja, ROJO_UR);
+    indicador(b, 244, altura - 60, "NC", hud.blanco_negro, BLANCO);
 }
 
 fn velocimetro(b: &mut Band, hud: &Datos, cx: i32, altura: i32) {
@@ -672,7 +675,7 @@ fn velocimetro(b: &mut Band, hud: &Datos, cx: i32, altura: i32) {
         b,
         cx,
         altura - 10,
-        "1/2/3 POTENCIA   ESPACIO ACELERAR   W/S A/D ORIENTAR   R VISION UR   T REINICIAR",
+        "1/2/3 POTENCIA   ESPACIO ACELERAR   W/S A/D ORIENTAR   R VISION UR   B NC   T REINICIAR",
         1,
         APAGADO,
     );

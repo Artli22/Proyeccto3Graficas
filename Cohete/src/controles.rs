@@ -17,6 +17,9 @@ pub struct Entrada {
     pub quitar_seleccion: bool,
     pub modo_local: bool,
     pub vision_ultra_roja: bool,
+    pub blanco_negro: bool,
+    pub camara_yaw: f32,
+    pub camara_pitch: f32,
 }
 
 pub struct Controles {
@@ -62,12 +65,22 @@ impl Controles {
             &[KeyboardKey::KEY_EQUAL],
         ) * 0.2
             * (rl.get_frame_time() * 60.0).min(3.0);
+        // Orbita libre de la camara con la nave posada (I/K elevacion, J/L giro).
+        entrada.camara_yaw += eje(&[KeyboardKey::KEY_J], &[KeyboardKey::KEY_L])
+            * VELOCIDAD_ROTACION
+            * (rl.get_frame_time() * 60.0).min(3.0);
+        entrada.camara_pitch += eje(&[KeyboardKey::KEY_K], &[KeyboardKey::KEY_I])
+            * VELOCIDAD_ROTACION
+            * (rl.get_frame_time() * 60.0).min(3.0);
 
         if rl.is_key_pressed(KeyboardKey::KEY_T) {
             entrada.reiniciar = true;
         }
         if rl.is_key_pressed(KeyboardKey::KEY_R) {
             entrada.vision_ultra_roja = true;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_B) {
+            entrada.blanco_negro = true;
         }
         if rl.is_key_pressed(KeyboardKey::KEY_C) {
             entrada.quitar_seleccion = true;
@@ -95,6 +108,11 @@ impl Controles {
             let delta = rl.get_mouse_delta();
             entrada.yaw += delta.x * SENSIBILIDAD_MOUSE;
             entrada.pitch -= delta.y * SENSIBILIDAD_MOUSE;
+        }
+        if rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_RIGHT) {
+            let delta = rl.get_mouse_delta();
+            entrada.camara_yaw += delta.x * SENSIBILIDAD_MOUSE;
+            entrada.camara_pitch -= delta.y * SENSIBILIDAD_MOUSE;
         }
     }
 

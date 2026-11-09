@@ -39,11 +39,29 @@ use vuelo::{Camara, Nave};
 const SCREEN_WIDTH: i32 = 1200;
 const SCREEN_HEIGHT: i32 = 800;
 const COLOR_SELECCION: Color = Color::new(255, 0, 255, 255);
+/// true: los filtros (R/B) tambien afectan al HUD; false: el HUD conserva sus colores.
+const FILTRAR_HUD: bool = true;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Propulsor {
     Fuego,
     Laser,
+}
+
+/// Hay interaccion con el teclado: una tecla recien pulsada o alguna mantenida.
+fn teclado_activo(rl: &mut RaylibHandle) -> bool {
+    use KeyboardKey::*;
+    let mut activa = false;
+    while rl.get_key_pressed().is_some() {
+        activa = true;
+    }
+    activa
+        || [
+            KEY_SPACE, KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, KEY_A, KEY_D, KEY_W, KEY_S, KEY_Q,
+            KEY_MINUS, KEY_EQUAL, KEY_I, KEY_J, KEY_K, KEY_L,
+        ]
+        .iter()
+        .any(|&k| rl.is_key_down(k))
 }
 
 fn init() -> (RaylibHandle, RaylibThread) {
@@ -143,6 +161,7 @@ fn render(
     sistema: &SistemaPlanetario,
     restos: &restos::Restos,
     vision_ultra_roja: bool,
+    blanco_negro: bool,
 ) {
     let focal = SCREEN_HEIGHT as f32;
     let resaltado = Relleno::Solido(COLOR_SELECCION);
@@ -297,8 +316,7 @@ fn render(
             let (pantalla, relleno, shader) = triangulos[i as usize];
             triangle(franja, *pantalla, relleno, *shader);
         }
-        // El filtro tine la escena (no el laser, las particulas ni el HUD) para que la linea resalte.
-        if vision_ultra_roja {
+        if vision_ultra_roja && !FILTRAR_HUD {
             franja.filtro_rojizo();
         }
         if let Some(haz) = &haz {
@@ -307,7 +325,17 @@ fn render(
         for p in &particulas {
             particle_renderer::dibujar_particula(franja, p);
         }
+        if blanco_negro && !FILTRAR_HUD {
+            franja.filtro_blanco_negro();
+        }
         hud::dibujar(franja, datos, SCREEN_HEIGHT);
+        if FILTRAR_HUD {
+            if vision_ultra_roja {
+                franja.filtro_rojizo();
+            } else if blanco_negro {
+                franja.filtro_blanco_negro();
+            }
+        }
     });
 }
 
@@ -401,6 +429,7 @@ fn main() {
     let mut sistema = SistemaPlanetario::nuevo();
     let mut linea_petrova = LineaPetrova::nueva(&sistema);
     let mut vision_ultra_roja = false;
+    let mut blanco_negro = false;
     let mut nave = nave_en_tierra(&sistema);
     let mut camera = Camara::new(&nave, size);
     let mut controles = Controles::new();
@@ -428,14 +457,15 @@ fn main() {
         }
     };
     let mut sonido = audio.as_ref().and_then(sonido::SonidoNave::cargar);
-    println!("W/S: subir/bajar nariz | A/D: girar izquierda/derecha | ESPACIO: acelerar (soltar: frenar) | 1/2/3: potencia 30/60/100% | laser automatico >36500 km/h | rueda/+/-: distancia de camara | R: vision ultra roja (linea Petrova) | T: reiniciar | clic: seleccionar | C: quitar | F11: pantalla completa | ESC: salir");
+    println!("W/S: subir/bajar nariz | A/D: girar izquierda/derecha | ESPACIO: acelerar (soltar: frenar) | 1/2/3: potencia 30/60/100% | laser automatico >36500 km/h | rueda/+/-: distancia de camara | R: vision ultra roja (linea Petrova) | B: blanco y negro | T: reiniciar | clic: seleccionar | C: quitar | F11: pantalla completa | ESC: salir");
     println!("SISTEMA: Mercurio, Venus, Terra (+Luna), Marte, Jupiter, Saturno, Urano, Neptuno y Pluton. La nave aparece cerca de TERRA.");
-    println!("ATERRIZAJE: apunta a un cuerpo y avanza; el asistente reduce la velocidad al descender. Posado: A/D giran, ESPACIO despega.");
+    println!("ATERRIZAJE: apunta a un cuerpo y avanza; el asistente reduce la velocidad al descender. Posado: A/D giran, ESPACIO despega, I/J/K/L o clic derecho + arrastrar orbitan la camara.");
     println!("MODO LOCAL: cerca de un cuerpo, O lo activa/desactiva. A/D giran el rumbo sobre el horizonte del planeta, W/S inclinan la nariz respecto a el; la gravedad sigue actuando.");
     while !rl.window_should_close() {
         let now = std::time::Instant::now();
         let dt = now.duration_since(last).as_secs_f32().min(0.05);
         last = now;
+        let tecla = teclado_activo(&mut rl);
         let input = controles.leer(&rl);
         if rl.is_key_pressed(KeyboardKey::KEY_F11) {
             rl.toggle_fullscreen();
@@ -466,6 +496,11 @@ fn main() {
         sistema.actualizar(dt);
         if input.vision_ultra_roja {
             vision_ultra_roja = !vision_ultra_roja;
+            blanco_negro = false;
+        }
+        if input.blanco_negro {
+            blanco_negro = !blanco_negro;
+            vision_ultra_roja = false;
         }
         if vision_ultra_roja {
             linea_petrova.actualizar(dt, &sistema);
@@ -518,9 +553,11 @@ fn main() {
                 propulsor == Propulsor::Laser,
                 selected_power,
                 nave.speed_kmh,
+                tecla,
             );
         }
-        camera.update(&nave, size, input.zoom, dt);
+        let libre_camara = gestor.posada().then_some((input.camara_yaw, input.camara_pitch));
+        camera.update(&nave, size, input.zoom, dt, libre_camara);
         // Sin Espacio no hay efectos aunque la nave aun este frenando.
         if moving {
             if let Some((pos, dir, radius)) = boquilla(&model) {
@@ -570,6 +607,7 @@ fn main() {
         datos.estado_vuelo = gestor.titulo();
         datos.posada = gestor.posada();
         datos.vision_ultra_roja = vision_ultra_roja;
+        datos.blanco_negro = blanco_negro;
         datos.con_sistema(&nave, &sistema, size * aterrizaje::HOLGURA, recorrido_km);
         render(
             &mut framebuffer,
@@ -588,6 +626,7 @@ fn main() {
             &sistema,
             &restos,
             vision_ultra_roja,
+            blanco_negro,
         );
         let mut d = rl.begin_drawing(&thread);
         framebuffer.render_buffer(&mut d);

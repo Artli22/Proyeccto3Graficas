@@ -4,8 +4,54 @@ use raylib::prelude::*;
 const SUBIDA: f32 = 6.; 
 const BAJADA: f32 = 4.; 
 const RETRASO_FRENADO: f32 = 0.5;
-const VOLUMEN_FRENADO: f32 = 0.8;
+const GANANCIA_EFECTOS: f32 = 0.55;
+const VOLUMEN_FRENADO: f32 = 0.8 * GANANCIA_EFECTOS;
 const BUFFER_STREAM: i32 = 16384;
+const ESPERA_AMBIENTAL: f32 = 8.;
+const VOLUMEN_AMBIENTAL: f32 = 0.15;
+const ARCHIVO_AMBIENTAL: &str = "Dream Sweet in Sea Major Animated Lyric Video.mp3";
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum AccionAmbiental {
+    Nada,
+    Iniciar,
+}
+
+/// Lanza la pista tras `ESPERA_AMBIENTAL` sin teclado. Una vez iniciada se reproduce completa sin
+/// importar el teclado; al terminar solo vuelve a armarse tras una nueva pulsacion.
+#[derive(Default)]
+struct TemporizadorAmbiental {
+    inactivo: f32,
+    sonando: bool,
+    esperando_tecla: bool,
+}
+
+impl TemporizadorAmbiental {
+    fn paso(&mut self, dt: f32, tecla: bool, reproduciendo: bool) -> AccionAmbiental {
+        if self.sonando {
+            if !reproduciendo {
+                self.sonando = false;
+                self.inactivo = 0.;
+                self.esperando_tecla = true;
+            }
+            return AccionAmbiental::Nada;
+        }
+        if tecla {
+            self.inactivo = 0.;
+            self.esperando_tecla = false;
+            return AccionAmbiental::Nada;
+        }
+        if self.esperando_tecla {
+            return AccionAmbiental::Nada;
+        }
+        self.inactivo += dt;
+        if self.inactivo >= ESPERA_AMBIENTAL {
+            self.sonando = true;
+            return AccionAmbiental::Iniciar;
+        }
+        AccionAmbiental::Nada
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum AccionFrenado {
@@ -43,7 +89,7 @@ fn objetivos(activo: bool, laser: bool, potencia: f32) -> (f32, f32) {
     if !activo {
         return (0., 0.);
     }
-    let volumen = 0.35 + 0.65 * potencia.clamp(0., 1.);
+    let volumen = (0.35 + 0.65 * potencia.clamp(0., 1.)) * GANANCIA_EFECTOS;
     if laser {
         (0., volumen)
     } else {
@@ -99,6 +145,8 @@ pub struct SonidoNave<'a> {
     temporizador: TemporizadorFrenado,
     volumen_frenado: f32,
     desvaneciendo: bool,
+    ambiental: Option<Music<'a>>,
+    temporizador_ambiental: TemporizadorAmbiental,
 }
 
 impl<'a> SonidoNave<'a> {
@@ -113,6 +161,17 @@ impl<'a> SonidoNave<'a> {
                 return None;
             }
         };
+        let ambiental = match audio.new_music(&format!("{carpeta}{ARCHIVO_AMBIENTAL}")) {
+            Ok(mut musica) => {
+                musica.looping = false;
+                musica.set_volume(VOLUMEN_AMBIENTAL);
+                Some(musica)
+            }
+            Err(e) => {
+                eprintln!("No se pudo cargar la musica ambiental: {e}");
+                None
+            }
+        };
         Some(Self {
             normal: Pista::cargar(audio, &format!("{carpeta}PropulsionNormal.mp3"))?,
             laser: Pista::cargar(audio, &format!("{carpeta}propulsionLazer.mp3"))?,
@@ -120,6 +179,8 @@ impl<'a> SonidoNave<'a> {
             temporizador: TemporizadorFrenado::default(),
             volumen_frenado: 0.,
             desvaneciendo: false,
+            ambiental,
+            temporizador_ambiental: TemporizadorAmbiental::default(),
         })
     }
 
@@ -130,7 +191,19 @@ impl<'a> SonidoNave<'a> {
         laser: bool,
         potencia: f32,
         velocidad_kmh: f32,
+        tecla: bool,
     ) {
+        if let Some(musica) = self.ambiental.as_mut() {
+            let reproduciendo = musica.is_stream_playing();
+            if self.temporizador_ambiental.paso(dt, tecla, reproduciendo) == AccionAmbiental::Iniciar {
+                musica.set_volume(VOLUMEN_AMBIENTAL);
+                musica.play_stream();
+            }
+            if self.temporizador_ambiental.sonando {
+                musica.update_stream();
+            }
+        }
+
         let (normal, laser) = objetivos(activo, laser, potencia);
         self.normal.actualizar(normal, dt);
         self.laser.actualizar(laser, dt);
@@ -159,6 +232,55 @@ impl<'a> SonidoNave<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ambient_track_starts_after_a_minute_without_keys_and_plays_through() {
+        let mut t = TemporizadorAmbiental::default();
+        let mut inicios = 0;
+        for _ in 0..3800 {
+            if t.paso(0.016, false, false) == AccionAmbiental::Iniciar {
+                inicios += 1;
+            }
+        }
+        assert_eq!(inicios, 1);
+        // Con la pista sonando, el teclado no la interrumpe ni la reinicia.
+        for _ in 0..100 {
+            assert_eq!(t.paso(0.016, true, true), AccionAmbiental::Nada);
+        }
+        assert!(t.sonando);
+        // Al terminar no se repite sola: hace falta una pulsacion y otro minuto de calma.
+        assert_eq!(t.paso(0.016, false, false), AccionAmbiental::Nada);
+        for _ in 0..4000 {
+            assert_eq!(t.paso(0.016, false, false), AccionAmbiental::Nada);
+        }
+        t.paso(0.016, true, false);
+        let mut reinicios = 0;
+        for _ in 0..3800 {
+            if t.paso(0.016, false, false) == AccionAmbiental::Iniciar {
+                reinicios += 1;
+            }
+        }
+        assert_eq!(reinicios, 1);
+    }
+
+    #[test]
+    fn a_key_press_restarts_the_ambient_countdown() {
+        let mut t = TemporizadorAmbiental::default();
+        for _ in 0..3000 {
+            t.paso(0.016, false, false);
+        }
+        t.paso(0.016, true, false);
+        for _ in 0..3000 {
+            assert_eq!(t.paso(0.016, false, false), AccionAmbiental::Nada);
+        }
+    }
+
+    #[test]
+    fn effects_stay_louder_than_the_ambient_track() {
+        assert!(objetivos(true, false, 0.).0 > VOLUMEN_AMBIENTAL);
+        assert!(objetivos(true, true, 0.).1 > VOLUMEN_AMBIENTAL);
+        assert!(VOLUMEN_FRENADO > VOLUMEN_AMBIENTAL);
+    }
 
     #[test]
     fn only_the_active_engine_has_volume() {

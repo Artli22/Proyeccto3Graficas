@@ -168,6 +168,9 @@ pub struct Camara {
     target: Vector3,
     up: Vector3,
     pub distance: f32,
+    // Giro libre alrededor de la nave (solo posada): rumbo y elevacion sumados a la vista de persecucion.
+    orbita_yaw: f32,
+    orbita_pitch: f32,
 }
 impl Camara {
     // Ajustes expresados en tamanos de nave, para no depender de la escala del OBJ.
@@ -176,25 +179,77 @@ impl Camara {
     pub const LOOK_AHEAD: f32 = 0.35;
     // El retraso de la camara en regimen es velocidad / FOLLOW_SPEED: con 14 es la mitad que con 7.
     pub const FOLLOW_SPEED: f32 = 14.0;
-    fn desired(nave: &Nave, size: f32, distance: f32) -> (Vector3, Vector3) {
+    // Con la nave posada la camara se puede alejar mas y orbitar entre estas elevaciones (rad).
+    pub const DISTANCE_MAX_POSADA: f32 = 6.0;
+    const ELEVACION_MIN: f32 = 0.05;
+    const ELEVACION_MAX: f32 = 1.45;
+    const RETORNO_ORBITA: f32 = 4.0;
+    fn desired(
+        nave: &Nave,
+        size: f32,
+        distance: f32,
+        orbita_yaw: f32,
+        orbita_pitch: f32,
+    ) -> (Vector3, Vector3) {
+        let up = nave.up();
+        let atras = -nave.forward() * distance;
+        let altura = size * Self::HEIGHT;
+        let elevacion = altura.atan2(atras.length());
+        let radio = (atras.length().powi(2) + altura * altura).sqrt();
+        let elevacion = (elevacion + orbita_pitch).clamp(Self::ELEVACION_MIN, Self::ELEVACION_MAX);
+        let (s, c) = orbita_yaw.sin_cos();
+        let horizontal = if atras.length() > 1e-6 {
+            atras.normalized()
+        } else {
+            -nave.forward()
+        };
+        let horizontal = horizontal * c + up.cross(horizontal) * s;
+        let offset = (horizontal * elevacion.cos() + up * elevacion.sin()) * radio;
         (
-            nave.position - nave.forward() * distance + nave.up() * size * Self::HEIGHT,
-            nave.position + nave.forward() * size * Self::LOOK_AHEAD + nave.up() * size * 0.08,
+            nave.position + offset,
+            nave.position - horizontal * size * Self::LOOK_AHEAD + up * size * 0.08,
         )
     }
     pub fn new(nave: &Nave, size: f32) -> Self {
         let distance = size * Self::DISTANCE;
-        let (position, target) = Self::desired(nave, size, distance);
+        let (position, target) = Self::desired(nave, size, distance, 0., 0.);
         Self {
             position,
             target,
             up: nave.up(),
             distance,
+            orbita_yaw: 0.,
+            orbita_pitch: 0.,
         }
     }
-    pub fn update(&mut self, nave: &Nave, size: f32, zoom: f32, dt: f32) {
-        self.distance = (self.distance - zoom * size * 0.12).clamp(size * 0.9, size * 3.0);
-        let (position, target) = Self::desired(nave, size, self.distance);
+    /// `libre` es `Some((giro, elevacion))` con la nave posada: la camara orbita alrededor de ella.
+    /// Con `None` el giro vuelve suavemente a la vista de persecucion.
+    pub fn update(&mut self, nave: &Nave, size: f32, zoom: f32, dt: f32, libre: Option<(f32, f32)>) {
+        let distancia_max = if libre.is_some() {
+            Self::DISTANCE_MAX_POSADA
+        } else {
+            3.0
+        };
+        self.distance = (self.distance - zoom * size * 0.12).clamp(size * 0.9, size * distancia_max);
+        match libre {
+            Some((yaw, pitch)) => {
+                self.orbita_yaw = (self.orbita_yaw + yaw).rem_euclid(std::f32::consts::TAU);
+                let base = (size * Self::HEIGHT).atan2(self.distance);
+                self.orbita_pitch = (self.orbita_pitch + pitch).clamp(
+                    Self::ELEVACION_MIN - base,
+                    Self::ELEVACION_MAX - base,
+                );
+            }
+            None => {
+                let retorno = (-Self::RETORNO_ORBITA * dt.max(0.)).exp();
+                let yaw = (self.orbita_yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+                    - std::f32::consts::PI;
+                self.orbita_yaw = yaw * retorno;
+                self.orbita_pitch *= retorno;
+            }
+        }
+        let (position, target) =
+            Self::desired(nave, size, self.distance, self.orbita_yaw, self.orbita_pitch);
         let alpha = 1.0 - (-Self::FOLLOW_SPEED * dt.max(0.)).exp();
         self.position += (position - self.position) * alpha;
         self.target += (target - self.target) * alpha;
@@ -282,6 +337,24 @@ mod tests {
         let expected = Nave::MAX_SPEED_KMH / 3.6 / Nave::METERS_PER_UNIT;
         assert!((ship.position.z + expected).abs() < 0.05);
         assert!((ship.velocity.length() - expected).abs() < 0.05);
+    }
+    #[test]
+    fn free_orbit_moves_camera_around_ship_within_limits_and_returns() {
+        let ship = Nave::new();
+        let size = 10.;
+        let mut camera = Camara::new(&ship, size);
+        let inicial = camera.position;
+        for _ in 0..200 {
+            camera.update(&ship, size, 0., 0.05, Some((0.05, 0.1)));
+        }
+        let rel = camera.position - ship.position;
+        let elevacion = rel.y.atan2((rel.x * rel.x + rel.z * rel.z).sqrt());
+        assert!(elevacion <= Camara::ELEVACION_MAX + 1e-3 && elevacion >= Camara::ELEVACION_MIN - 1e-3);
+        assert!((camera.position - inicial).length() > size * 0.1);
+        for _ in 0..400 {
+            camera.update(&ship, size, 0., 0.05, None);
+        }
+        assert!((camera.position - inicial).length() < size * 0.05);
     }
     #[test]
     fn controls_and_camera_basis() {

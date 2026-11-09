@@ -66,6 +66,16 @@ impl Band<'_> {
         }
     }
 
+    /// Filtro blanco y negro de toda la franja (luminancia).
+    pub fn filtro_blanco_negro(&mut self) {
+        for px in self.pixels.chunks_exact_mut(4) {
+            let luz = ((px[0] as u32 * 77 + px[1] as u32 * 150 + px[2] as u32 * 29) >> 8) as u8;
+            px[0] = luz;
+            px[1] = luz;
+            px[2] = luz;
+        }
+    }
+
     pub fn visible(&self, x: i32, y: i32, depth: f32) -> bool {
         if x < 0 || x >= self.width || y < self.y0 || y >= self.y1 || !depth.is_finite() {
             return false;
