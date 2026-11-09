@@ -7,6 +7,7 @@ El siguiente proyecto tiene como objetivo demostrar un sistema solar y poder via
 ## Evidencia de funcionamietno
 
 ### Enlace al video del funcionamiento del programa: 
+[Ver video en YouTube](https://youtu.be/oDuMLFU-VOI)
 
 ### Fotografias del programa: 
 - Normal: 
