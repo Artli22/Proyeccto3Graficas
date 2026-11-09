@@ -16,6 +16,7 @@ pub struct Entrada {
     pub clic: Option<Vector2>,
     pub quitar_seleccion: bool,
     pub modo_local: bool,
+    pub vision_ultra_roja: bool,
 }
 
 pub struct Controles {
@@ -62,8 +63,11 @@ impl Controles {
         ) * 0.2
             * (rl.get_frame_time() * 60.0).min(3.0);
 
-        if rl.is_key_pressed(KeyboardKey::KEY_R) {
+        if rl.is_key_pressed(KeyboardKey::KEY_T) {
             entrada.reiniciar = true;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_R) {
+            entrada.vision_ultra_roja = true;
         }
         if rl.is_key_pressed(KeyboardKey::KEY_C) {
             entrada.quitar_seleccion = true;

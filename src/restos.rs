@@ -23,7 +23,6 @@ const DERIVA_MAXIMA: f32 = 6.;
 const CELDAS_LOD: [u32; 3] = [40, 16, 6];
 const RADIO_MINIMO_PX: f32 = 1.5;
 
-/// Colores de cada resto por material del OBJ: pintura, metal quemado, bordes expuestos, oxido.
 const PALETAS: [[[u8; 3]; 4]; 5] = [
     [[40, 190, 110], [34, 38, 42], [185, 195, 200], [110, 72, 40]],
     [[47, 60, 160], [28, 28, 40], [170, 175, 210], [90, 48, 110]],

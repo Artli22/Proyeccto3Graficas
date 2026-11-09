@@ -3,7 +3,7 @@ use crate::framebuffer::Band;
 use crate::planeta::SistemaPlanetario;
 use crate::vuelo::Nave;
 use raylib::prelude::{Color, Vector3};
-use std::f32::consts::TAU;
+use std::f32::consts::{PI, TAU};
 
 const BLANCO: Color = Color::new(240, 244, 250, 255);
 const APAGADO: Color = Color::new(142, 164, 178, 255);
@@ -14,6 +14,7 @@ const CIAN: Color = Color::new(70, 225, 255, 255);
 const VERDE: Color = Color::new(70, 255, 120, 255);
 const AMARILLO: Color = Color::new(255, 232, 60, 255);
 const ROJO: Color = Color::new(235, 60, 50, 255);
+const ROJO_UR: Color = Color::new(255, 30, 40, 255);
 
 const SEGMENTOS_BARRA: i32 = 44;
 const PX_POR_PASO: f32 = 30.;
@@ -32,8 +33,10 @@ pub struct Datos {
     ratio: f32,
     laser: bool,
     active: bool,
+    potencia: f32,
     pub estado_vuelo: &'static str,
     pub posada: bool,
+    pub vision_ultra_roja: bool,
     odometro: String,
     cercanos: Vec<Cercano>,
     altitud: f32,
@@ -174,8 +177,10 @@ impl Datos {
             ratio: nave.speed_kmh / Nave::MAX_SPEED_KMH,
             laser: nave.laser_mode(),
             active,
+            potencia: power,
             estado_vuelo: "VUELO LIBRE",
             posada: false,
+            vision_ultra_roja: false,
             odometro: odometro_texto(0.),
             cercanos: Vec::new(),
             altitud: 0.,
@@ -316,6 +321,26 @@ fn borde(b: &mut Band, x: i32, y: i32, w: i32, h: i32, c: Color) {
     rect(b, x, y + h - 1, w, 1, c);
     rect(b, x, y, 1, h, c);
     rect(b, x + w - 1, y, 1, h, c);
+}
+
+fn linea(b: &mut Band, x0: f32, y0: f32, x1: f32, y1: f32, grosor: i32, c: Color) {
+    let (min_y, max_y) = (y0.min(y1) as i32 - grosor, y0.max(y1) as i32 + grosor);
+    if max_y < b.y0 || min_y >= b.y1 {
+        return;
+    }
+    let pasos = (x1 - x0).abs().max((y1 - y0).abs()).ceil().max(1.) as i32;
+    for k in 0..=pasos {
+        let t = k as f32 / pasos as f32;
+        let (x, y) = (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+        rect(
+            b,
+            x.round() as i32 - grosor / 2,
+            y.round() as i32 - grosor / 2,
+            grosor,
+            grosor,
+            c,
+        );
+    }
 }
 
 fn disco(b: &mut Band, cx: f32, cy: f32, r: f32, c: Color) {
@@ -536,6 +561,50 @@ fn dibujar_mapa(b: &mut Band, hud: &Datos, x: i32, y: i32) {
     texto_derecha(b, x + LADO_MAPA, y + LADO_MAPA + 14, "MAPA ESTELAR", 1, APAGADO);
 }
 
+// Semicirculo de potencia: arco lleno hasta `frac`, marcas en los tres niveles y aguja.
+fn medidor(b: &mut Band, cx: i32, cy: i32, r: i32, frac: f32, color: Color) {
+    if b.y1 <= cy - r - 10 || b.y0 >= cy + 20 {
+        return;
+    }
+    let apagado = Color::new(40, 52, 72, 255);
+    for y in (cy - r - 2).max(b.y0)..=(cy + 1).min(b.y1 - 1) {
+        for x in cx - r - 2..=cx + r + 2 {
+            let (dx, dy) = ((x - cx) as f32, (cy - y) as f32);
+            let d = (dx * dx + dy * dy).sqrt();
+            if d > r as f32 + 0.5 || d < r as f32 - 5. {
+                continue;
+            }
+            let f = 1. - dy.max(0.).atan2(dx) / PI;
+            b.overlay_pixel(x, y, if f <= frac { color } else { apagado });
+        }
+    }
+    for nivel in [0.3_f32, 0.6, 1.0] {
+        let a = PI * (1. - nivel);
+        let (ca, sa) = (a.cos(), a.sin());
+        let r = r as f32;
+        linea(
+            b,
+            cx as f32 + ca * (r + 2.),
+            cy as f32 - sa * (r + 2.),
+            cx as f32 + ca * (r + 7.),
+            cy as f32 - sa * (r + 7.),
+            2,
+            BLANCO,
+        );
+    }
+    let a = PI * (1. - frac.clamp(0., 1.));
+    linea(
+        b,
+        cx as f32,
+        cy as f32,
+        cx as f32 + a.cos() * (r - 8) as f32,
+        cy as f32 - a.sin() * (r - 8) as f32,
+        2,
+        BLANCO,
+    );
+    disco(b, cx as f32, cy as f32, 3.5, BLANCO);
+}
+
 fn indicador(b: &mut Band, cx: i32, cy: i32, etiqueta: &str, encendido: bool, color: Color) {
     if b.y1 <= cy - 16 || b.y0 >= cy + 16 {
         return;
@@ -554,14 +623,20 @@ fn grupo_izquierdo(b: &mut Band, hud: &Datos, altura: i32) {
     if b.y1 <= altura - 130 {
         return;
     }
+    let (cx, cy, r) = (84, altura - 62, 42);
+    let color = if hud.laser { CIAN } else { NARANJA };
+    medidor(b, cx, cy, r, hud.potencia, color);
+    texto_centrado(b, cx, cy + 8, &format!("{}%", (hud.potencia * 100.).round() as u32), 1, BLANCO);
+    text(b, cx - r - 2, cy + 8, "0", 1, APAGADO);
+    texto_derecha(b, cx + r + 4, cy + 8, "MAX", 1, APAGADO);
     text(b, 28, altura - 30, &hud.odometro, 2, BLANCO);
     text(b, 28 + ancho_texto(&hud.odometro, 2) + 8, altura - 24, "KM", 1, APAGADO);
-    // Los indicadores ocupan el lugar del antiguo medidor de potencia.
     let activo = hud.active;
-    indicador(b, 64, altura - 98, "NRM", activo && !hud.laser, NARANJA);
-    indicador(b, 104, altura - 98, "LSR", activo && hud.laser, CIAN);
-    indicador(b, 64, altura - 58, "AST", hud.estado_vuelo == "APROXIMANDO", AMARILLO);
-    indicador(b, 104, altura - 58, "LND", hud.posada, VERDE);
+    indicador(b, 172, altura - 96, "NRM", activo && !hud.laser, NARANJA);
+    indicador(b, 208, altura - 96, "LSR", activo && hud.laser, CIAN);
+    indicador(b, 172, altura - 60, "AST", hud.estado_vuelo == "APROXIMANDO", AMARILLO);
+    indicador(b, 208, altura - 60, "LND", hud.posada, VERDE);
+    indicador(b, 244, altura - 78, "UR", hud.vision_ultra_roja, ROJO_UR);
 }
 
 fn velocimetro(b: &mut Band, hud: &Datos, cx: i32, altura: i32) {
@@ -597,7 +672,7 @@ fn velocimetro(b: &mut Band, hud: &Datos, cx: i32, altura: i32) {
         b,
         cx,
         altura - 10,
-        "1/2/3 POTENCIA   ESPACIO ACELERAR   W/S A/D ORIENTAR   R REINICIAR",
+        "1/2/3 POTENCIA   ESPACIO ACELERAR   W/S A/D ORIENTAR   R VISION UR   T REINICIAR",
         1,
         APAGADO,
     );

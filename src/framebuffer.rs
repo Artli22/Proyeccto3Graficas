@@ -55,6 +55,17 @@ impl Band<'_> {
         pixel[3] = 255;
     }
 
+    /// Filtro rojizo de toda la franja: pasa la imagen a monocromo y la tiñe de rojo.
+    pub fn filtro_rojizo(&mut self) {
+        for px in self.pixels.chunks_exact_mut(4) {
+            let luz = (px[0] as u32 * 77 + px[1] as u32 * 150 + px[2] as u32 * 29) >> 8;
+            let r = (px[0] as u32 + luz * 2 + 60) / 2;
+            px[0] = ((px[0] as u32 * 3 + r * 5) / 8).min(255) as u8;
+            px[1] = ((px[1] as u32 * 2 + luz * 2 / 3) / 8) as u8;
+            px[2] = ((px[2] as u32 * 2 + luz * 2 / 3) / 8) as u8;
+        }
+    }
+
     pub fn visible(&self, x: i32, y: i32, depth: f32) -> bool {
         if x < 0 || x >= self.width || y < self.y0 || y >= self.y1 || !depth.is_finite() {
             return false;

@@ -5,6 +5,8 @@ mod fragment;
 mod framebuffer;
 mod hud;
 mod laser;
+#[allow(non_snake_case)]
+mod lineaPetrova;
 mod luz;
 mod modelo_planeta;
 mod particle_renderer;
@@ -25,6 +27,7 @@ use cohete::obj::Model;
 use fragment::ShaderParams;
 use framebuffer::Framebuffer;
 use laser::Laser;
+use lineaPetrova::LineaPetrova;
 use particle_renderer::ParticulaPantalla;
 use pipeline::{ScreenVertex, Uniforms};
 use planeta::SistemaPlanetario;
@@ -131,6 +134,7 @@ fn render(
     nave: &Nave,
     seleccionado: Option<usize>,
     thrust_engine: &ThrustEngine,
+    linea_petrova: &LineaPetrova,
     laser: Option<&Laser>,
     luz_intensidad: f32,
     estrellas: &estrellas::Estrellas,
@@ -138,6 +142,7 @@ fn render(
     fondo_rosa: &fondo_rosa::FondoRosa,
     sistema: &SistemaPlanetario,
     restos: &restos::Restos,
+    vision_ultra_roja: bool,
 ) {
     let focal = SCREEN_HEIGHT as f32;
     let resaltado = Relleno::Solido(COLOR_SELECCION);
@@ -239,7 +244,7 @@ fn render(
     translucidos.sort_by(|a, b| profundidad(b).total_cmp(&profundidad(a)));
 
     // Las partículas se proyectan una sola vez y se ordenan de atrás hacia adelante
-    let particulas = preparar_particulas(thrust_engine, matrices, focal);
+    let particulas = preparar_particulas(thrust_engine, linea_petrova, matrices, focal);
 
     // El láser sale de la misma boquilla que el propulsor de fuego
     let haz = laser.and_then(|l| {
@@ -292,6 +297,10 @@ fn render(
             let (pantalla, relleno, shader) = triangulos[i as usize];
             triangle(franja, *pantalla, relleno, *shader);
         }
+        // El filtro tine la escena (no el laser, las particulas ni el HUD) para que la linea resalte.
+        if vision_ultra_roja {
+            franja.filtro_rojizo();
+        }
         if let Some(haz) = &haz {
             laser::dibujar_laser(franja, haz);
         }
@@ -304,6 +313,7 @@ fn render(
 
 fn preparar_particulas(
     thrust_engine: &ThrustEngine,
+    linea_petrova: &LineaPetrova,
     matrices: &Uniforms,
     focal: f32,
 ) -> Vec<ParticulaPantalla> {
@@ -322,6 +332,17 @@ fn preparar_particulas(
             )
         })
         .collect();
+    particulas.extend(linea_petrova.puntos().iter().filter_map(|p| {
+        particle_renderer::proyectar_particula(
+            matrices.effect_point(p.position),
+            p.radius,
+            p.color,
+            0.0,
+            SCREEN_WIDTH,
+            SCREEN_HEIGHT,
+            focal,
+        )
+    }));
     particulas.sort_by(|a, b| b.depth.total_cmp(&a.depth));
     particulas
 }
@@ -378,6 +399,8 @@ fn main() {
     framebuffer.set_background_color(Color::BLACK);
     let estrellas = estrellas::Estrellas::new();
     let mut sistema = SistemaPlanetario::nuevo();
+    let mut linea_petrova = LineaPetrova::nueva(&sistema);
+    let mut vision_ultra_roja = false;
     let mut nave = nave_en_tierra(&sistema);
     let mut camera = Camara::new(&nave, size);
     let mut controles = Controles::new();
@@ -405,7 +428,7 @@ fn main() {
         }
     };
     let mut sonido = audio.as_ref().and_then(sonido::SonidoNave::cargar);
-    println!("W/S: subir/bajar nariz | A/D: girar izquierda/derecha | ESPACIO: acelerar (soltar: frenar) | 1/2/3: potencia 30/60/100% | laser automatico >36500 km/h | rueda/+/-: distancia de camara | R: reiniciar | clic: seleccionar | C: quitar | F11: pantalla completa | ESC: salir");
+    println!("W/S: subir/bajar nariz | A/D: girar izquierda/derecha | ESPACIO: acelerar (soltar: frenar) | 1/2/3: potencia 30/60/100% | laser automatico >36500 km/h | rueda/+/-: distancia de camara | R: vision ultra roja (linea Petrova) | T: reiniciar | clic: seleccionar | C: quitar | F11: pantalla completa | ESC: salir");
     println!("SISTEMA: Mercurio, Venus, Terra (+Luna), Marte, Jupiter, Saturno, Urano, Neptuno y Pluton. La nave aparece cerca de TERRA.");
     println!("ATERRIZAJE: apunta a un cuerpo y avanza; el asistente reduce la velocidad al descender. Posado: A/D giran, ESPACIO despega.");
     println!("MODO LOCAL: cerca de un cuerpo, O lo activa/desactiva. A/D giran el rumbo sobre el horizonte del planeta, W/S inclinan la nariz respecto a el; la gravedad sigue actuando.");
@@ -441,6 +464,14 @@ fn main() {
             selected_power = 1.;
         }
         sistema.actualizar(dt);
+        if input.vision_ultra_roja {
+            vision_ultra_roja = !vision_ultra_roja;
+        }
+        if vision_ultra_roja {
+            linea_petrova.actualizar(dt, &sistema);
+        } else {
+            linea_petrova.apagar();
+        }
         restos.actualizar(dt, &sistema);
         if input.modo_local && !input.reiniciar {
             gestor.alternar_modo_local(&mut nave, &sistema);
@@ -538,6 +569,7 @@ fn main() {
         let mut datos = hud::Datos::new(&nave, selected_power, moving);
         datos.estado_vuelo = gestor.titulo();
         datos.posada = gestor.posada();
+        datos.vision_ultra_roja = vision_ultra_roja;
         datos.con_sistema(&nave, &sistema, size * aterrizaje::HOLGURA, recorrido_km);
         render(
             &mut framebuffer,
@@ -547,6 +579,7 @@ fn main() {
             &nave,
             selected,
             &thrust,
+            &linea_petrova,
             beam,
             power,
             &estrellas,
@@ -554,6 +587,7 @@ fn main() {
             &fondo_rosa,
             &sistema,
             &restos,
+            vision_ultra_roja,
         );
         let mut d = rl.begin_drawing(&thread);
         framebuffer.render_buffer(&mut d);
