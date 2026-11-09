@@ -380,7 +380,7 @@ fn nave_cerca_de(sistema: &SistemaPlanetario, nombre: &str) -> Option<Nave> {
 
 fn nave_en_tierra(sistema: &SistemaPlanetario) -> Nave {
     let mut nave = Nave::new();
-    if let Some(tierra) = sistema.planetas.iter().find(|p| p.config.nombre == "TERRA") {
+    if let Some(tierra) = sistema.planetas.iter().find(|p| p.config.nombre == "TIERRA") {
         let radio = tierra.config.radio;
         nave.position = tierra.centro + Vector3::new(0., radio * 0.6, radio * 3.);
         nave.liberar_base((tierra.centro - nave.position).normalized());
@@ -426,6 +426,10 @@ fn main() {
     let mut previous_mode = Propulsor::Fuego;
     let mut selected_power = 0.6;
     let mut last = std::time::Instant::now();
+    let mut mostrar_fps = false;
+    let mut fps_mostrado = 0u32;
+    let mut fps_tiempo = 0f32;
+    let mut fps_cuadros = 0u32;
     let mut gestor = GestorAterrizaje::nuevo();
     let mut restos = {
         let ruta = concat!(env!("CARGO_MANIFEST_DIR"), "/src/assets/Nave_destruida.obj");
@@ -444,14 +448,25 @@ fn main() {
         }
     };
     let mut sonido = audio.as_ref().and_then(sonido::SonidoNave::cargar);
-    println!("W/S: subir/bajar nariz | A/D: girar izquierda/derecha | ESPACIO: acelerar (soltar: frenar) | 1/2/3: potencia 30/60/100% | 4/5: ir cerca de UNICRON/MOGO | laser automatico >36500 km/h | rueda/+/-: distancia de camara | R: vision ultra roja (linea Petrova) | B: blanco y negro | T: reiniciar | F11: pantalla completa | ESC: salir");
+    println!("W/S: subir/bajar nariz | A/D: girar izquierda/derecha | ESPACIO: acelerar (soltar: frenar) | 1/2/3: potencia 30/60/100% | 4/5: ir cerca de UNICRON/MOGO | laser automatico >36500 km/h | rueda/+/-: distancia de camara | R: vision ultra roja (linea Petrova) | B: blanco y negro | T: reiniciar | F: mostrar/ocultar FPS | F11: pantalla completa | ESC: salir");
     println!("SISTEMA: Mercurio, Venus, Terra (+Luna), Marte, Jupiter, Saturno, Urano, Neptuno y Pluton. La nave aparece cerca de TERRA.");
     println!("ATERRIZAJE: apunta a un cuerpo y avanza; el asistente reduce la velocidad al descender. Posado: A/D giran, ESPACIO despega, I/J/K/L o clic derecho + arrastrar orbitan la camara.");
     println!("MODO LOCAL: cerca de un cuerpo, O lo activa/desactiva. A/D giran el rumbo sobre el horizonte del planeta, W/S inclinan la nariz respecto a el; la gravedad sigue actuando.");
     while !rl.window_should_close() {
         let now = std::time::Instant::now();
-        let dt = now.duration_since(last).as_secs_f32().min(0.05);
+        let dt_real = now.duration_since(last).as_secs_f32();
+        let dt = dt_real.min(0.05);
         last = now;
+        fps_tiempo += dt_real;
+        fps_cuadros += 1;
+        if fps_tiempo >= 0.5 {
+            fps_mostrado = (fps_cuadros as f32 / fps_tiempo).round() as u32;
+            fps_tiempo = 0.;
+            fps_cuadros = 0;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_F) {
+            mostrar_fps = !mostrar_fps;
+        }
         let tecla = teclado_activo(&mut rl);
         let input = controles.leer(&rl);
         if rl.is_key_pressed(KeyboardKey::KEY_F11) {
@@ -591,6 +606,7 @@ fn main() {
         datos.posada = gestor.posada();
         datos.vision_ultra_roja = vision_ultra_roja;
         datos.blanco_negro = blanco_negro;
+        datos.fps = mostrar_fps.then_some(fps_mostrado);
         datos.con_sistema(&nave, &sistema, size * aterrizaje::HOLGURA, recorrido_km);
         render(
             &mut framebuffer,

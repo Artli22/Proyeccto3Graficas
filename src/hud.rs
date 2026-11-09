@@ -38,6 +38,7 @@ pub struct Datos {
     pub posada: bool,
     pub vision_ultra_roja: bool,
     pub blanco_negro: bool,
+    pub fps: Option<u32>,
     odometro: String,
     cercanos: Vec<Cercano>,
     altitud: f32,
@@ -183,6 +184,7 @@ impl Datos {
             posada: false,
             vision_ultra_roja: false,
             blanco_negro: false,
+            fps: None,
             odometro: odometro_texto(0.),
             cercanos: Vec::new(),
             altitud: 0.,
@@ -787,4 +789,7 @@ pub fn dibujar(b: &mut Band, hud: &Datos, altura: i32) {
     grupo_izquierdo(b, hud, altura);
     velocimetro(b, hud, ancho / 2, altura);
     instrumentos(b, hud, ancho, altura);
+    if let Some(fps) = hud.fps {
+        texto_centrado(b, ancho / 2, 14, &format!("FPS {fps}"), 2, VERDE);
+    }
 }
