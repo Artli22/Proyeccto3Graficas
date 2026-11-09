@@ -4,6 +4,20 @@ Arturo Lima - 24683
 
 El siguiente proyecto tiene como objetivo demostrar un sistema solar y poder viajar entre diferentes planetas; dejando la mayoria de responsabilidades de ejecucion a la GPU local y evitar depender de librerias externas, siendo Raylib la unica excepcion. 
 
+## Evidencia de funcionamietno
+
+### Enlace al video del funcionamiento del programa: 
+
+### Fotografias del programa: 
+- Normal: 
+<img width="1756" height="1106" alt="image" src="https://github.com/user-attachments/assets/381c5d40-46fb-4a3c-9b2c-e83412c564bc" />
+
+- Carmesi:
+  <img width="1721" height="1095" alt="image" src="https://github.com/user-attachments/assets/0c6deff1-219e-4397-8de7-bb71e79448dc" />
+
+- Clasico: 
+<img width="1681" height="1107" alt="image" src="https://github.com/user-attachments/assets/acf3854e-a2bd-4a6d-991c-c37fc6b0b515" />
+
 ## Cómo ejecutarlo
 
 Se necesita de la instalacion de Rust con `cargo` y Raylib, preferiblemente ver - "5.5.1" 
