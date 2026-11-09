@@ -8,22 +8,6 @@ fn edge(a: Vector3, b: Vector3, px: f32, py: f32) -> f32 {
     (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x)
 }
 
-pub fn profundidad_en(v: [Vector3; 3], px: f32, py: f32) -> Option<f32> {
-    let [a, b, c] = v;
-    let area = edge(a, b, c.x, c.y);
-    if area.abs() < 1e-6 {
-        return None;
-    }
-    let w0 = edge(b, c, px, py) / area;
-    let w1 = edge(c, a, px, py) / area;
-    let w2 = edge(a, b, px, py) / area;
-    if w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0 {
-        Some(1.0 / (w0 / a.z + w1 / b.z + w2 / c.z))
-    } else {
-        None
-    }
-}
-
 pub fn triangle(
     framebuffer: &mut Band,
     mut vertices: [ScreenVertex; 3],

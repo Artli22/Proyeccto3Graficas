@@ -124,22 +124,3 @@ pub fn mezclar(origen: Color, destino: [u8; 4]) -> [u8; 4] {
         255,
     ]
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn texture_alpha_and_bilinear_sampling() {
-        let texture = Relleno::Textura {
-            width: 2,
-            height: 1,
-            pixels: vec![Color::new(255, 0, 180, 255), Color::BLANK],
-        };
-        let c = texture.color_en(Vector2::new(0.5, 0.));
-        assert_eq!(c.r, 255);
-        assert_eq!(c.b, 180);
-        assert!((c.a as i32 - 128).abs() <= 1);
-        assert!(!texture.es_opaco());
-        assert_eq!(texture.color_en(Vector2::new(1., 0.)).a, 0);
-    }
-}

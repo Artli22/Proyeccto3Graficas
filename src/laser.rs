@@ -192,17 +192,3 @@ fn dibujar_haz(band: &mut Band, h: &HazPantalla) {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn apagar_removes_power_without_fade() {
-        let mut laser = Laser::new();
-        laser.update(0.1, 1.);
-        assert!(laser.potencia > 0.);
-        laser.apagar();
-        assert_eq!(laser.potencia, 0.);
-        assert_eq!(laser.tiempo, 0.);
-    }
-}

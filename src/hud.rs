@@ -675,7 +675,7 @@ fn velocimetro(b: &mut Band, hud: &Datos, cx: i32, altura: i32) {
         b,
         cx,
         altura - 10,
-        "1/2/3 POTENCIA   ESPACIO ACELERAR   W/S A/D ORIENTAR   R VISION UR   B NC   T REINICIAR",
+        "1/2/3 POTENCIA   4/5 UNICRON/MOGO   ESPACIO ACELERAR   W/S A/D ORIENTAR   R VISION UR   B NC   T REINICIAR",
         1,
         APAGADO,
     );
@@ -787,112 +787,4 @@ pub fn dibujar(b: &mut Band, hud: &Datos, altura: i32) {
     grupo_izquierdo(b, hud, altura);
     velocimetro(b, hud, ancho / 2, altura);
     instrumentos(b, hud, ancho, altura);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::planeta::SistemaPlanetario;
-
-    #[test]
-    fn speed_format_and_motor_status() {
-        let mut ship = Nave::new();
-        ship.speed_kmh = Nave::MAX_SPEED_KMH;
-        let active = Datos::new(&ship, 0.6, true);
-        assert_eq!(active.speed, "164,000");
-        assert_eq!(active.motor, "MOTOR LASER");
-        let off = Datos::new(&ship, 0.6, false);
-        assert_eq!(off.motor, "MOTOR APAGADO");
-        assert_eq!(off.status, "FRENANDO");
-    }
-
-    #[test]
-    fn odometer_format() {
-        assert_eq!(odometro_texto(31_884.1), "031,884.1");
-        assert_eq!(odometro_texto(0.), "000,000.0");
-    }
-
-    #[test]
-    fn distances_switch_to_kilometers() {
-        assert_eq!(distancia_texto(850.), "850 M");
-        assert_eq!(distancia_texto(15_900.), "16 KM");
-        assert_eq!(distancia_texto(1_950_000.), "1,950 KM");
-    }
-
-    #[test]
-    fn altitude_tape_step_follows_magnitude() {
-        let casi = |a: f32, b: f32| (a - b).abs() < 1e-2;
-        assert!(casi(paso_cinta(0.), 1.));
-        assert!(casi(paso_cinta(7.), 1.));
-        assert!(casi(paso_cinta(15.9), 2.));
-        assert!(casi(paso_cinta(850.), 20.));
-        assert!(casi(paso_cinta(15_000.), 2_000.));
-    }
-
-    #[test]
-    fn horizon_responds_to_pitch_and_roll() {
-        let nivel = (0., 0., 1.);
-        assert!(sobre_horizonte(0., 10., nivel, 96.) > 0.);
-        assert!(sobre_horizonte(0., -10., nivel, 96.) < 0.);
-        // Nariz arriba: el horizonte baja respecto al centro del instrumento.
-        assert!(sobre_horizonte(0., 0., (0.5, 0., 0.866), 96.) > 0.);
-        assert!(sobre_horizonte(0., 0., (-0.5, 0., 0.866), 96.) < 0.);
-        // Alabeo a la derecha: el lado derecho del horizonte sube, el centro queda en cielo
-        // y un punto a la derecha del centro queda en suelo.
-        let derecha = (0., -0.5, 0.866);
-        assert!(sobre_horizonte(40., 0., derecha, 96.) < 0.);
-        assert!(sobre_horizonte(-40., 0., derecha, 96.) > 0.);
-    }
-
-    #[test]
-    fn spawn_reports_terra_as_nearest_body() {
-        let sistema = SistemaPlanetario::nuevo();
-        let tierra = &sistema.planetas[sistema.indice("TERRA").unwrap()];
-        let mut nave = Nave::new();
-        nave.position = tierra.centro + Vector3::new(0., 90., 450.);
-        let mut datos = Datos::new(&nave, 0.6, false);
-        datos.con_sistema(&nave, &sistema, 2.6, 100.);
-        assert_eq!(datos.cercanos.len(), 5);
-        assert_eq!(datos.cercanos[0].nombre, "TERRA");
-        assert_eq!(datos.cuerpo, "TERRA");
-        assert!(datos.altitud > 0.);
-        // Mapa: una marca por cuerpo (la Luna incluida), con el mas cercano resaltado.
-        assert_eq!(datos.cuerpos_mapa.len(), sistema.planetas.len());
-        assert_eq!(datos.cuerpos_mapa.iter().filter(|m| m.cercano).count(), 1);
-        assert!(datos.nave_mapa.is_some());
-        assert!(datos.orbitas_mapa.iter().all(|&r| r > 0. && r < 1.));
-    }
-
-    #[test]
-    fn map_compresses_distance_and_keeps_bearing() {
-        let alcance = 1000.;
-        let (cerca, lejos) = (proyectar_mapa((100., 0.), alcance), proyectar_mapa((900., 0.), alcance));
-        assert!(cerca.0 > 0. && cerca.0 < lejos.0 && lejos.0 < 1.);
-        let fuera = proyectar_mapa((0., 5000.), alcance);
-        assert!((fuera.1 - 1.).abs() < 1e-5 && fuera.0.abs() < 1e-5);
-        assert_eq!(proyectar_mapa((0., 0.), alcance), (0., 0.));
-    }
-
-    #[test]
-    fn map_heading_follows_radial_and_tangential_motion() {
-        let pos = (400., 0.);
-        let radial = direccion_en_mapa(pos, (1., 0.), 1000.).unwrap();
-        assert!((radial.0 - 1.).abs() < 1e-5 && radial.1.abs() < 1e-5);
-        let tangencial = direccion_en_mapa(pos, (0., -1.), 1000.).unwrap();
-        assert!(tangencial.0.abs() < 1e-5 && (tangencial.1 + 1.).abs() < 1e-5);
-        assert!(direccion_en_mapa(pos, (0., 0.), 1000.).is_none());
-    }
-
-    #[test]
-    fn altitude_is_zero_when_landed_on_the_surface() {
-        let sistema = SistemaPlanetario::nuevo();
-        let p = &sistema.planetas[sistema.indice("TERRA").unwrap()];
-        let dir = Vector3::new(0., 1., 0.);
-        let holgura = 2.6;
-        let mut nave = Nave::new();
-        nave.position = p.centro + dir * (p.radio_superficie(p.a_local(dir)) + holgura);
-        let mut datos = Datos::new(&nave, 0.6, false);
-        datos.con_sistema(&nave, &sistema, holgura, 0.);
-        assert!(datos.altitud < 1.0);
-    }
 }

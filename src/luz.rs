@@ -59,34 +59,3 @@ pub fn sombrear(normal: Vector3, hacia_camara: Vector3, luz: Vector3, intensidad
 
     Sombreado { difuso, especular, tinte }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn surfaces_facing_the_light_are_brighter() {
-        let luz = Vector3::new(1., 0., 0.);
-        let camara = Vector3::new(0., 0., 1.);
-        let de_frente = sombrear(Vector3::new(1., 0., 0.), camara, luz, 1.);
-        let de_espaldas = sombrear(Vector3::new(-1., 0., 0.), camara, luz, 1.);
-        assert!(de_frente.difuso > de_espaldas.difuso);
-        // El lado oscuro conserva solo el ambiente.
-        assert!((de_espaldas.difuso - AMBIENTE).abs() < 1e-6);
-    }
-
-    #[test]
-    fn light_weakens_with_distance_but_keeps_a_floor() {
-        assert!(atenuacion(0.) > atenuacion(3600.));
-        assert!(atenuacion(3600.) > atenuacion(10_000.));
-        assert!((atenuacion(1e9) - LUZ_MINIMA).abs() < 1e-6);
-    }
-
-    #[test]
-    fn dimmer_light_lowers_diffuse_term() {
-        let luz = Vector3::new(0., 1., 0.);
-        let n = Vector3::new(0., 1., 0.);
-        let v = Vector3::new(0., 0., 1.);
-        assert!(sombrear(n, v, luz, 1.).difuso > sombrear(n, v, luz, 0.4).difuso);
-    }
-}

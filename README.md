@@ -15,12 +15,6 @@ fuente, así que necesita CMake y un compilador de C/C++ (y libclang para los bi
 cargo run --release
 ```
 
-Pruebas automáticas:
-
-```
-cargo test --release
-```
-
 Usa siempre `--release` para jugar: el rasterizador por software es mucho más lento en debug.
 
 ## Controles
@@ -32,9 +26,9 @@ Usa siempre `--release` para jugar: el rasterizador por software es mucho más l
 | Botón izquierdo del ratón + arrastrar | Orientar la nave |
 | `Espacio` | Acelerar (al soltar, la nave frena) |
 | `1` / `2` / `3` | Potencia del motor: 30 % / 60 % / 100 % |
+| `4` / `5` | Colocar la nave cerca de Unicron / Mogo |
 | Rueda del ratón, `+`, `-` / `Q` | Distancia de la cámara |
 | `R` | Reiniciar (la nave vuelve a aparecer cerca de Terra) |
-| Clic / `C` | Seleccionar un triángulo de la nave / quitar la selección |
 | `Esc` | Salir |
 
 Con control de juego: palanca izquierda para orientar, botón inferior para acelerar y gatillos

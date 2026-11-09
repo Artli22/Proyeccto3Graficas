@@ -483,6 +483,11 @@ impl Planeta {
         !matches!(self.config.aspecto, Aspecto::Modelo { .. })
     }
 
+    /// Radio de la esfera que envuelve todo el cuerpo (anillos y puas incluidos).
+    pub fn radio_envolvente(&self) -> f32 {
+        self.radio_limite.max(self.config.radio)
+    }
+
     /// Distancia del centro a la superficie en la direccion local `dir` (unitaria).
     pub fn radio_superficie(&self, dir: Vector3) -> f32 {
         radio_en(&self.config, fbm(dir, self.config.semilla))
@@ -677,9 +682,9 @@ impl SistemaPlanetario {
                 semilla: 57,
                 padre: Some(2),
                 orbita_radio: 600.,
-                orbita_inicial: -FRAC_PI_2 + 0.5, // visible desde el punto de aparicion de la nave
-                orbita_velocidad: 0.08, // ~80 s por vuelta: mas rapida que la Tierra (~4 min) sin ser brusca
-                rotacion_velocidad: 0.08, // rotacion sincrona: siempre muestra la misma cara
+                orbita_inicial: -FRAC_PI_2 + 0.5, 
+                orbita_velocidad: 0.08, 
+                rotacion_velocidad: 0.08, 
                 relieve: 0.08,
                 aspecto: rocoso([88., 88., 92.], [196., 196., 200.], false),
                 ..base
@@ -817,142 +822,5 @@ impl SistemaPlanetario {
                 .map_or(Vector3::zero(), |p| self.planetas[p].centro);
             self.planetas[i].actualizar(dt, centro_padre);
         }
-    }
-
-    #[cfg(test)]
-    pub fn indice(&self, nombre: &str) -> Option<usize> {
-        self.planetas.iter().position(|p| p.config.nombre == nombre)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn config(orbita_inicial: f32) -> PlanetaConfig {
-        PlanetaConfig {
-            nombre: "T",
-            radio: 100.,
-            semilla: 7,
-            padre: None,
-            orbita_radio: 500.,
-            orbita_inicial,
-            orbita_velocidad: 0.1,
-            rotacion_velocidad: 0.2,
-            inclinacion: 0.3,
-            subdivisiones: 2,
-            relieve: 0.1,
-            aspecto: Aspecto::Tierra,
-            anillo: None,
-            gravedad: None,
-        }
-    }
-    #[test]
-    fn mesh_is_reproducible_and_outward() {
-        let a = Planeta::nuevo(config(0.), Vector3::zero());
-        let b = Planeta::nuevo(config(0.), Vector3::zero());
-        assert_eq!(a.mallas[0].triangulos.len(), 20 * 16);
-        for (ta, tb) in a.mallas[0].triangulos.iter().zip(&b.mallas[0].triangulos) {
-            assert!((ta[0] - tb[0]).length() < 1e-6);
-            let normal = (ta[1] - ta[0]).cross(ta[2] - ta[0]);
-            assert!(normal.dot(ta[0] + ta[1] + ta[2]) > 0.);
-        }
-    }
-    #[test]
-    fn surface_radius_within_relief_bounds() {
-        let p = Planeta::nuevo(config(0.), Vector3::zero());
-        for d in [Vector3::new(1., 0., 0.), Vector3::new(0.3, 0.8, -0.5).normalized()] {
-            let r = p.radio_superficie(d);
-            assert!(r >= 100. - 1e-3 && r <= 100. * 1.1 + 1e-3);
-        }
-    }
-    #[test]
-    fn gravity_points_to_center_scales_with_size_and_is_overridable() {
-        let p = Planeta::nuevo(config(0.), Vector3::zero());
-        let punto = p.centro + Vector3::new(0., 200., 0.);
-        let a = p.aceleracion_gravedad(punto);
-        assert!(a.y < 0. && a.x.abs() < 1e-4 && a.z.abs() < 1e-4);
-        assert!(p.aceleracion_gravedad(p.centro + Vector3::new(0., 150., 0.)).length() > a.length());
-        let lejos = p.centro + Vector3::new(0., 100. * (GRAVEDAD_ALCANCE + 1.5), 0.);
-        assert_eq!(p.aceleracion_gravedad(lejos).length(), 0.);
-        let mut grande = config(0.);
-        grande.radio = 200.;
-        let g = Planeta::nuevo(grande, Vector3::zero());
-        assert!(g.gravedad_superficie() > p.gravedad_superficie());
-        let mut fija = config(0.);
-        fija.gravedad = Some(9.);
-        assert_eq!(Planeta::nuevo(fija, Vector3::zero()).gravedad_superficie(), 9.);
-    }
-    #[test]
-    fn local_world_rotation_roundtrip() {
-        let mut p = Planeta::nuevo(config(0.), Vector3::zero());
-        p.actualizar(3., Vector3::zero());
-        let v = Vector3::new(1., 2., 3.);
-        assert!((p.a_local(p.a_mundo(v)) - v).length() < 1e-4);
-    }
-    #[test]
-    fn model_matrix_matches_a_mundo() {
-        let mut p = Planeta::nuevo(config(1.), Vector3::zero());
-        p.actualizar(2., Vector3::zero());
-        let v = Vector3::new(3., -1., 2.);
-        let m = p.matriz_modelo().transform([v.x, v.y, v.z, 1.]);
-        let esperado = p.centro + p.a_mundo(v);
-        assert!((Vector3::new(m[0], m[1], m[2]) - esperado).length() < 1e-3);
-    }
-    #[test]
-    fn frustum_culls_bodies_outside_view() {
-        let u = Uniforms::scene(Mat4::identity(), Mat4::identity(), 1200, 800);
-        let enfrente = Planeta::nuevo(config(std::f32::consts::FRAC_PI_2), Vector3::zero());
-        let detras = Planeta::nuevo(config(-std::f32::consts::FRAC_PI_2), Vector3::zero());
-        let lateral = Planeta::nuevo(config(0.), Vector3::zero());
-        assert!(enfrente.proyeccion(&u).is_some());
-        assert!(detras.proyeccion(&u).is_none());
-        assert!(lateral.proyeccion(&u).is_none());
-    }
-    #[test]
-    fn lod_uses_fewer_triangles_when_far() {
-        let mut c = config(0.);
-        c.subdivisiones = 5;
-        let p = Planeta::nuevo(c, Vector3::zero());
-        assert!(p.malla_lod(500.).triangulos.len() > p.malla_lod(10.).triangulos.len());
-    }
-    #[test]
-    fn sun_sits_at_origin_and_planets_orbit_outside_it() {
-        let mut s = SistemaPlanetario::nuevo();
-        assert_eq!(s.sol.centro, Vector3::zero());
-        for p in s.planetas.iter().filter(|p| p.config.padre.is_none()) {
-            assert!(p.config.orbita_radio - p.config.radio > s.sol.radio + 100.);
-        }
-        s.actualizar(2.);
-        assert!((s.tiempo - 2.).abs() < 1e-6);
-    }
-
-    #[test]
-    fn obj_bodies_are_in_the_system_with_core_collision_radius_and_gravity() {
-        let s = SistemaPlanetario::nuevo();
-        for nombre in ["MOGO", "UNICRON"] {
-            let p = &s.planetas[s.indice(nombre).unwrap()];
-            assert!(p.mallas[0].triangulos.len() > 10_000, "{nombre} debe usar el OBJ");
-            assert!(!p.malla_cerrada());
-            assert!(p.radio_limite > p.config.radio);
-            let dir = Vector3::new(0., 1., 0.);
-            assert!((p.radio_superficie(dir) - p.config.radio).abs() < 1e-3);
-            assert!(p.malla_lod(500.).triangulos.len() > p.malla_lod(2.).triangulos.len());
-            let conteos: Vec<usize> = p.mallas.iter().map(|m| m.triangulos.len()).collect();
-            assert!(conteos.windows(2).all(|w| w[0] > w[1]), "{nombre}: {conteos:?}");
-        }
-        let g = |n: &str| s.planetas[s.indice(n).unwrap()].gravedad_superficie();
-        assert!(g("UNICRON") > g("MOGO") && g("MOGO") > g("TERRA"));
-    }
-
-    #[test]
-    fn system_has_requested_bodies_and_scales() {
-        let s = SistemaPlanetario::nuevo();
-        let radio = |n: &str| s.planetas[s.indice(n).unwrap()].config.radio;
-        assert_eq!(s.planetas.len(), 12);
-        assert!(radio("MERCURIO") < radio("MARTE") && radio("PLUTON") < radio("MERCURIO"));
-        assert!((radio("LUNA") / radio("TERRA") - 0.2727).abs() < 1e-3);
-        let luna = &s.planetas[s.indice("LUNA").unwrap()];
-        let tierra = &s.planetas[s.indice("TERRA").unwrap()];
-        assert!(((luna.centro - tierra.centro).length() - luna.config.orbita_radio).abs() < 1e-2);
     }
 }

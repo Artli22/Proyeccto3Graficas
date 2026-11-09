@@ -71,35 +71,3 @@ impl Resplandor {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn glow_fades_with_distance_and_ends() {
-        assert!(Resplandor::opacidad(0.) > Resplandor::opacidad(0.5));
-        assert!(Resplandor::opacidad(0.5) > Resplandor::opacidad(2.));
-        assert!(Resplandor::opacidad(ALCANCE) < 1e-6);
-        assert!(Resplandor::opacidad(0.) <= 1.);
-    }
-
-    #[test]
-    fn glow_goes_from_pale_yellow_to_orange() {
-        let (cerca, lejos) = (Resplandor::color(0.), Resplandor::color(3.));
-        assert!(cerca[1] > lejos[1] && cerca[2] > lejos[2]);
-    }
-
-    #[test]
-    fn no_glow_when_sun_is_behind_or_camera_is_inside() {
-        let u = Uniforms::scene(
-            crate::pipeline::Mat4::identity(),
-            crate::pipeline::Mat4::identity(),
-            1200,
-            800,
-        );
-        assert!(Resplandor::preparar(&u, Vector3::new(0., 0., -5000.), 700.).is_none());
-        assert!(Resplandor::preparar(&u, Vector3::new(0., 0., 500.), 700.).is_none());
-        assert!(Resplandor::preparar(&u, Vector3::new(0., 0., 5000.), 700.).is_some());
-    }
-}

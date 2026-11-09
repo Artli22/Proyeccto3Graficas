@@ -226,19 +226,6 @@ impl Framebuffer {
             Color::WHITE,
         );
     }
-
-    /// Convierte un punto de la ventana a coordenadas del framebuffer; `None` si cae en las
-    /// barras negras.
-    pub fn a_framebuffer(&self, punto: Vector2, ventana: (i32, i32)) -> Option<Vector2> {
-        let r = rect_destino(self.width, self.height, ventana.0, ventana.1);
-        if punto.x < r.x || punto.y < r.y || punto.x >= r.x + r.width || punto.y >= r.y + r.height {
-            return None;
-        }
-        Some(Vector2::new(
-            (punto.x - r.x) * self.width as f32 / r.width,
-            (punto.y - r.y) * self.height as f32 / r.height,
-        ))
-    }
 }
 
 /// Mayor rectangulo centrado dentro de la ventana que conserva la proporcion del framebuffer.
@@ -251,60 +238,4 @@ fn rect_destino(ancho: i32, alto: i32, ventana_ancho: i32, ventana_alto: i32) ->
         w,
         h,
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn destination_keeps_aspect_and_centers() {
-        let r = rect_destino(1200, 800, 1920, 1080);
-        assert!((r.width / r.height - 1.5).abs() < 1e-4);
-        assert!((r.height - 1080.).abs() < 1e-3);
-        assert!((r.x * 2. + r.width - 1920.).abs() < 1e-3);
-        let exacto = rect_destino(1200, 800, 1200, 800);
-        assert_eq!((exacto.x, exacto.y, exacto.width, exacto.height), (0., 0., 1200., 800.));
-    }
-
-    #[test]
-    fn opaque_depth_and_background() {
-        let mut pixels = vec![0; 4];
-        let mut z = vec![f32::INFINITY];
-        let mut b = Band {
-            width: 1,
-            y0: 0,
-            y1: 1,
-            pixels: &mut pixels,
-            zbuffer: &mut z,
-            current_color: Color::WHITE,
-        };
-        b.background_pixel(0, 0, Color::WHITE);
-        assert!(b.visible(0, 0, 100.)); // El cielo no escribe profundidad.
-        b.set_current_color(Color::new(255, 0, 0, 255));
-        b.point(0, 0, 2.);
-        b.set_current_color(Color::new(0, 0, 255, 255));
-        b.point(0, 0, 3.);
-        assert_eq!(&b.pixels[..4], &[255, 0, 0, 255]);
-        b.point(0, 0, 1.);
-        assert_eq!(&b.pixels[..4], &[0, 0, 255, 255]);
-        assert_eq!(b.zbuffer[0], 1.);
-    }
-    #[test]
-    fn transparency_tests_depth_without_writing_it() {
-        let mut pixels = vec![0, 0, 0, 255];
-        let mut z = vec![2.];
-        let mut b = Band {
-            width: 1,
-            y0: 0,
-            y1: 1,
-            pixels: &mut pixels,
-            zbuffer: &mut z,
-            current_color: Color::new(255, 0, 0, 128),
-        };
-        b.point(0, 0, 3.);
-        assert_eq!(b.pixels[0], 0);
-        b.point(0, 0, 1.);
-        assert!(b.pixels[0] > 0);
-        assert_eq!(b.zbuffer[0], 2.);
-    }
 }

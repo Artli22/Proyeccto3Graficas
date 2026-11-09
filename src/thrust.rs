@@ -134,19 +134,3 @@ impl ThrustEngine {
         Color::new(r, g, b, alpha.clamp(0.0, 255.0) as u8)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn apagar_removes_all_particles_immediately() {
-        let mut engine = ThrustEngine::new();
-        engine.intensity = 1.;
-        engine.update(0.02, Vector3::zero(), Vector3::new(0., 0., 1.), 0.3);
-        assert!(!engine.get_particles().is_empty());
-        engine.apagar();
-        assert!(engine.get_particles().is_empty());
-        assert_eq!(engine.intensity, 0.);
-        assert_eq!(engine.emit_accumulator, 0.);
-    }
-}

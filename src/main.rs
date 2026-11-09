@@ -33,12 +33,11 @@ use pipeline::{ScreenVertex, Uniforms};
 use planeta::SistemaPlanetario;
 use raylib::prelude::*;
 use thrust::ThrustEngine;
-use triangle::{profundidad_en, triangle};
+use triangle::triangle;
 use vuelo::{Camara, Nave};
 
 const SCREEN_WIDTH: i32 = 1200;
 const SCREEN_HEIGHT: i32 = 800;
-const COLOR_SELECCION: Color = Color::new(255, 0, 255, 255);
 /// true: los filtros (R/B) tambien afectan al HUD; false: el HUD conserva sus colores.
 const FILTRAR_HUD: bool = true;
 
@@ -150,7 +149,6 @@ fn render(
     matrices: &Uniforms,
     camera: &Camara,
     nave: &Nave,
-    seleccionado: Option<usize>,
     thrust_engine: &ThrustEngine,
     linea_petrova: &LineaPetrova,
     laser: Option<&Laser>,
@@ -164,7 +162,6 @@ fn render(
     blanco_negro: bool,
 ) {
     let focal = SCREEN_HEIGHT as f32;
-    let resaltado = Relleno::Solido(COLOR_SELECCION);
 
     let mut opacos: Vec<Visible> = Vec::new();
     let mut translucidos: Vec<Visible> = Vec::new();
@@ -176,7 +173,7 @@ fn render(
         None
     };
 
-    for (indice, tri) in model.triangles.iter().enumerate() {
+    for tri in model.triangles.iter() {
         let transformed = std::array::from_fn::<_, 3, _>(|i| {
             pipeline::vertex_shader(tri.vertices[i], tri.uvs[i], matrices)
         });
@@ -189,15 +186,11 @@ fn render(
             normal: normal.normalized(),
             eye: camera.position,
             engine_light: light_pos,
-            unlit: seleccionado == Some(indice),
+            unlit: false,
             sol: Some(sistema.sol.centro),
             emisivo: None,
         };
-        let material = if shader.unlit {
-            &resaltado
-        } else {
-            &tri.relleno
-        };
+        let material = &tri.relleno;
         // Ensamblado -> clipping homogeneo -> division de perspectiva -> viewport.
         for clipped in pipeline::clip_triangle(transformed) {
             let screen = clipped.map(|v| pipeline::viewport(v, matrices));
@@ -375,19 +368,14 @@ fn preparar_particulas(
     particulas
 }
 
-fn triangulo_en(model: &Model, matrices: &Uniforms, x: f32, y: f32) -> Option<usize> {
-    let mut mejor: Option<(usize, f32)> = None;
-    for (indice, tri) in model.triangles.iter().enumerate() {
-        // La seleccion utiliza exactamente el mismo clipping del renderizador.
-        for screen in pipeline::prepare(tri.vertices, tri.uvs, matrices) {
-            if let Some(depth) = profundidad_en(screen.map(|v| v.screen), x, y) {
-                if mejor.map_or(true, |(_, d)| depth < d) {
-                    mejor = Some((indice, depth));
-                }
-            }
-        }
-    }
-    mejor.map(|(indice, _)| indice)
+/// Coloca la nave frente al planeta `nombre`, mirandolo, a una distancia segura de su superficie.
+fn nave_cerca_de(sistema: &SistemaPlanetario, nombre: &str) -> Option<Nave> {
+    let planeta = sistema.planetas.iter().find(|p| p.config.nombre == nombre)?;
+    let distancia = (planeta.config.radio * 3.).max(planeta.radio_envolvente() * 1.5);
+    let mut nave = Nave::new();
+    nave.position = planeta.centro + Vector3::new(0., distancia * 0.2, distancia);
+    nave.liberar_base((planeta.centro - nave.position).normalized());
+    Some(nave)
 }
 
 fn nave_en_tierra(sistema: &SistemaPlanetario) -> Nave {
@@ -433,7 +421,6 @@ fn main() {
     let mut nave = nave_en_tierra(&sistema);
     let mut camera = Camara::new(&nave, size);
     let mut controles = Controles::new();
-    let mut selected = None;
     let mut thrust = ThrustEngine::new();
     let mut laser = Laser::new();
     let mut previous_mode = Propulsor::Fuego;
@@ -457,7 +444,7 @@ fn main() {
         }
     };
     let mut sonido = audio.as_ref().and_then(sonido::SonidoNave::cargar);
-    println!("W/S: subir/bajar nariz | A/D: girar izquierda/derecha | ESPACIO: acelerar (soltar: frenar) | 1/2/3: potencia 30/60/100% | laser automatico >36500 km/h | rueda/+/-: distancia de camara | R: vision ultra roja (linea Petrova) | B: blanco y negro | T: reiniciar | clic: seleccionar | C: quitar | F11: pantalla completa | ESC: salir");
+    println!("W/S: subir/bajar nariz | A/D: girar izquierda/derecha | ESPACIO: acelerar (soltar: frenar) | 1/2/3: potencia 30/60/100% | 4/5: ir cerca de UNICRON/MOGO | laser automatico >36500 km/h | rueda/+/-: distancia de camara | R: vision ultra roja (linea Petrova) | B: blanco y negro | T: reiniciar | F11: pantalla completa | ESC: salir");
     println!("SISTEMA: Mercurio, Venus, Terra (+Luna), Marte, Jupiter, Saturno, Urano, Neptuno y Pluton. La nave aparece cerca de TERRA.");
     println!("ATERRIZAJE: apunta a un cuerpo y avanza; el asistente reduce la velocidad al descender. Posado: A/D giran, ESPACIO despega, I/J/K/L o clic derecho + arrastrar orbitan la camara.");
     println!("MODO LOCAL: cerca de un cuerpo, O lo activa/desactiva. A/D giran el rumbo sobre el horizonte del planeta, W/S inclinan la nariz respecto a el; la gravedad sigue actuando.");
@@ -470,19 +457,24 @@ fn main() {
         if rl.is_key_pressed(KeyboardKey::KEY_F11) {
             rl.toggle_fullscreen();
         }
-        if input.reiniciar {
-            nave = nave_en_tierra(&sistema);
+        let destino = if rl.is_key_pressed(KeyboardKey::KEY_FOUR) {
+            nave_cerca_de(&sistema, "UNICRON")
+        } else if rl.is_key_pressed(KeyboardKey::KEY_FIVE) {
+            nave_cerca_de(&sistema, "MOGO")
+        } else {
+            None
+        };
+        if input.reiniciar || destino.is_some() {
+            nave = destino.unwrap_or_else(|| nave_en_tierra(&sistema));
             camera = Camara::new(&nave, size);
             gestor = GestorAterrizaje::nuevo();
             restos.olvidar();
             thrust.apagar();
             laser.apagar();
-            selected = None;
-            selected_power = 0.6;
+            if input.reiniciar {
+                selected_power = 0.6;
+            }
             previous_mode = Propulsor::Fuego;
-        }
-        if input.quitar_seleccion {
-            selected = None;
         }
         if rl.is_key_pressed(KeyboardKey::KEY_ONE) {
             selected_power = 0.3;
@@ -586,15 +578,6 @@ fn main() {
             SCREEN_WIDTH,
             SCREEN_HEIGHT,
         );
-        if let Some(click) = input
-            .clic
-            .and_then(|c| framebuffer.a_framebuffer(c, (rl.get_screen_width(), rl.get_screen_height())))
-        {
-            selected = triangulo_en(&model, &matrices, click.x, click.y);
-            if let Some(i) = selected {
-                println!("Triangulo [{i}]");
-            }
-        }
         let (beam, power) = if moving {
             match propulsor {
                 Propulsor::Fuego => (None, thrust.intensity),
@@ -615,7 +598,6 @@ fn main() {
             &matrices,
             &camera,
             &nave,
-            selected,
             &thrust,
             &linea_petrova,
             beam,
